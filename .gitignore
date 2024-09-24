@@ -1,0 +1,6 @@
+# user
+.idea
+.vscode
+
+# settings
+go.sum
