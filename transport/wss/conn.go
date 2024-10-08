@@ -1,10 +1,13 @@
 package wss
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"syscall"
@@ -13,70 +16,152 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type socketConn struct {
-	*websocket.Conn
-	lock   sync.Mutex
-	reader io.Reader
+type websocketConn struct {
+	conn       *websocket.Conn
+	reader     io.Reader
+	remoteAddr net.Addr
+
+	// https://godoc.org/github.com/gorilla/websocket#hdr-Concurrency
+	rMux sync.Mutex
+	wMux sync.Mutex
 }
 
-func NewSocketConn(conn *websocket.Conn) net.Conn {
-	return &socketConn{
-		Conn: conn,
-	}
+type WebsocketConfig struct {
+	Host      string
+	Port      string
+	Path      string
+	Headers   http.Header
+	TLS       bool
+	TLSConfig *tls.Config
 }
 
-func (s *socketConn) Close() error {
-	return s.Conn.Close()
-}
-
-func (s *socketConn) SetDeadline(t time.Time) error {
-	err := s.SetReadDeadline(t)
-	if err != nil {
-		return err
-	}
-
-	err = s.SetReadDeadline(t)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *socketConn) Write(p []byte) (n int, err error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	err = s.WriteMessage(websocket.BinaryMessage, p)
-	return len(p), err
-}
-
-func (s *socketConn) Read(b []byte) (int, error) {
+// Read implements net.Conn.Read()
+func (wsc *websocketConn) Read(b []byte) (int, error) {
+	wsc.rMux.Lock()
+	defer wsc.rMux.Unlock()
 	for {
-		reader, err := s.getReader()
+		reader, err := wsc.getReader()
 		if err != nil {
 			return 0, err
 		}
 
 		nBytes, err := reader.Read(b)
-		if errors.Is(err, io.EOF) {
-			s.reader = nil
+		if err == io.EOF {
+			wsc.reader = nil
 			continue
 		}
 		return nBytes, err
 	}
 }
 
-func (s *socketConn) getReader() (io.Reader, error) {
-	if s.reader != nil {
-		return s.reader, nil
+// Write implements io.Writer.
+func (wsc *websocketConn) Write(b []byte) (int, error) {
+	wsc.wMux.Lock()
+	defer wsc.wMux.Unlock()
+	if err := wsc.conn.WriteMessage(websocket.BinaryMessage, b); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+func (wsc *websocketConn) Close() error {
+	var errors []string
+	if err := wsc.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second*5)); err != nil {
+		errors = append(errors, err.Error())
+	}
+	if err := wsc.conn.Close(); err != nil {
+		errors = append(errors, err.Error())
+	}
+	if len(errors) > 0 {
+		return fmt.Errorf("failed to close connection: %s", strings.Join(errors, ","))
+	}
+	return nil
+}
+
+func (wsc *websocketConn) getReader() (io.Reader, error) {
+	if wsc.reader != nil {
+		return wsc.reader, nil
 	}
 
-	_, reader, err := s.NextReader()
+	_, reader, err := wsc.conn.NextReader()
 	if err != nil {
 		return nil, err
 	}
-	s.reader = reader
+	wsc.reader = reader
 	return reader, nil
+}
+
+func (wsc *websocketConn) LocalAddr() net.Addr {
+	return wsc.conn.LocalAddr()
+}
+
+func (wsc *websocketConn) RemoteAddr() net.Addr {
+	return wsc.remoteAddr
+}
+
+func (wsc *websocketConn) SetDeadline(t time.Time) error {
+	if err := wsc.SetReadDeadline(t); err != nil {
+		return err
+	}
+	return wsc.SetWriteDeadline(t)
+}
+
+func (wsc *websocketConn) SetReadDeadline(t time.Time) error {
+	return wsc.conn.SetReadDeadline(t)
+}
+
+func (wsc *websocketConn) SetWriteDeadline(t time.Time) error {
+	return wsc.conn.SetWriteDeadline(t)
+}
+
+func StreamWebSocketConn(conn net.Conn, c *WebsocketConfig) (net.Conn, error) {
+	dialer := &websocket.Dialer{
+		NetDial: func(network, addr string) (net.Conn, error) {
+			return conn, nil
+		},
+		ReadBufferSize:   4 * 1024,
+		WriteBufferSize:  4 * 1024,
+		HandshakeTimeout: time.Second * 8,
+	}
+
+	scheme := "ws"
+	if c.TLS {
+		scheme = "wss"
+		dialer.TLSClientConfig = c.TLSConfig
+	}
+
+	u, err := url.Parse(c.Path)
+	if err != nil {
+		return nil, fmt.Errorf("parse url %s error: %w", c.Path, err)
+	}
+
+	uri := url.URL{
+		Scheme:   scheme,
+		Host:     net.JoinHostPort(c.Host, c.Port),
+		Path:     u.Path,
+		RawQuery: u.RawQuery,
+	}
+
+	headers := http.Header{}
+	if c.Headers != nil {
+		for k := range c.Headers {
+			headers.Add(k, c.Headers.Get(k))
+		}
+	}
+
+	wsConn, resp, err := dialer.Dial(uri.String(), headers)
+	if err != nil {
+		reason := err.Error()
+		if resp != nil {
+			reason = resp.Status
+		}
+		return nil, fmt.Errorf("dial %s error: %s", uri.Host, reason)
+	}
+
+	return &websocketConn{
+		conn:       wsConn,
+		remoteAddr: conn.RemoteAddr(),
+	}, nil
 }
 
 var (
@@ -140,3 +225,4 @@ func IsClose(err error) bool {
 
 	return false
 }
+

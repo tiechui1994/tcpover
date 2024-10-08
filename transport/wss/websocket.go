@@ -72,7 +72,10 @@ func WebSocketConnect(ctx context.Context, server string, param *ConnectParam) (
 		return nil, err
 	}
 
-	return NewSocketConn(conn), err
+	return &websocketConn{
+		conn:       conn,
+		remoteAddr: conn.RemoteAddr(),
+	}, nil
 }
 
 func RawWebSocketConnect(ctx context.Context, server string, param *ConnectParam) (*websocket.Conn, error) {
