@@ -14,6 +14,7 @@ type Proxy interface {
 type ProxyType = string
 
 const (
-	Wless    ProxyType = "Wless"
-	Direct   ProxyType = "Direct"
+	Wless  ProxyType = "Wless"
+	Vless  ProxyType = "Vless"
+	Direct ProxyType = "Direct"
 )

@@ -23,7 +23,7 @@ const (
 	DirectSendRecv = "sendrecv"
 )
 
-type WebSocketOption struct {
+type WlessOption struct {
 	Name   string   `proxy:"name"`
 	Local  string   `proxy:"local"`
 	Remote string   `proxy:"remote"`
@@ -33,7 +33,7 @@ type WebSocketOption struct {
 	Mux    bool     `proxy:"mux"`
 }
 
-func NewWless(option WebSocketOption) (ctx.Proxy, error) {
+func NewWless(option WlessOption) (ctx.Proxy, error) {
 	if option.Server == "" {
 		return nil, fmt.Errorf("server must be set")
 	}
@@ -41,12 +41,12 @@ func NewWless(option WebSocketOption) (ctx.Proxy, error) {
 		return nil, fmt.Errorf("server must be startsWith wss:// or ws://")
 	}
 
-	var manager dispatcher
+	var dispatcher dispatcher
 	var err error
 	if option.Mux {
-		manager, err = newMuxConnManager(option)
+		dispatcher, err = newMuxConnManager(option)
 	} else {
-		manager, err = newDirectConnManager(option)
+		dispatcher, err = newDirectConnManager(option)
 	}
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func NewWless(option WebSocketOption) (ctx.Proxy, error) {
 			name:      option.Name,
 			proxyType: ctx.Wless,
 		},
-		manager: manager,
+		dispatcher: dispatcher,
 	}, nil
 }
 
@@ -72,18 +72,18 @@ type dispatcher interface {
 
 type Wless struct {
 	*base
-	manager dispatcher
+	dispatcher dispatcher
 }
 
 func (p *Wless) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
-	return p.manager.DialContext(ctx, metadata)
+	return p.dispatcher.DialContext(ctx, metadata)
 }
 
 type directConnManager struct {
 	createConn func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error)
 }
 
-func newDirectConnManager(option WebSocketOption) (*directConnManager, error) {
+func newDirectConnManager(option WlessOption) (*directConnManager, error) {
 	return &directConnManager{
 		createConn: func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
 			var mode wss.Mode
@@ -128,7 +128,7 @@ type muxConnManager struct {
 	createConn func() (*mux.ClientWorker, error)
 }
 
-func newMuxConnManager(option WebSocketOption) (*muxConnManager, error) {
+func newMuxConnManager(option WlessOption) (*muxConnManager, error) {
 	c := &muxConnManager{createConn: func() (*mux.ClientWorker, error) {
 		var mode wss.Mode
 		if option.Mode.IsDirect() {
