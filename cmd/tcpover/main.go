@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"github.com/tiechui1994/tcpover/transport/outbound"
 	"log"
 	"net/http"
 
@@ -70,11 +71,11 @@ func main() {
 		var proxies []map[string]interface{}
 
 		proxies = append(proxies, map[string]interface{}{
-			"type":   ctx.Wless,
+			"type":   ctx.Vless,
 			"name":   "proxy1",
 			"local":  *name,
 			"remote": "",
-			"direct": "send",
+			"direct": outbound.DirectSendRecv,
 			"server": *serverEndpoint,
 			"mode":   wss.ModeDirect,
 			"mux":    *mux,

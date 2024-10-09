@@ -6,11 +6,11 @@ import (
 	"log"
 	"net"
 	"regexp"
-	"time"
 
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/socks5"
 	"github.com/tiechui1994/tcpover/transport/vless"
+	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
 )
 
@@ -30,7 +30,6 @@ func NewVless(option VlessOption) (ctx.Proxy, error) {
 	var dispatcher dispatcher
 	var err error
 	if option.Mux {
-		dispatcher, err = newMuxConnDispatcher(option.WlessOption)
 	} else {
 		dispatcher, err = newVlessDirectConnDispatcher(option)
 	}
@@ -40,7 +39,7 @@ func NewVless(option VlessOption) (ctx.Proxy, error) {
 
 	if option.Direct == DirectRecvOnly || option.Direct == DirectSendRecv {
 		responder := PassiveResponder{server: option.Server}
-		responder.manage(option.Remote)
+		responder.manage(option.Local)
 	}
 
 	return &Vless{
@@ -62,8 +61,10 @@ func (p *Vless) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Co
 }
 
 func newWlessDirectConnDispatcher(option WlessOption) (*directConnDispatcher, error) {
+	client := wless.NewClient()
+
 	return &directConnDispatcher{
-		createConn: func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
+		createConn: func(cx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
 			var mode wss.Mode
 			if option.Mode.IsDirect() {
 				mode = wss.ModeDirect
@@ -75,22 +76,19 @@ func newWlessDirectConnDispatcher(option WlessOption) (*directConnDispatcher, er
 			// name: 直接连接, name is empty
 			//       远程代理, name not empty
 			// mode: ModeDirect | ModeForward
-			code := time.Now().Format("20060102150405__Agent")
-			conn, err := wss.WebSocketConnect(ctx, option.Server, &wss.ConnectParam{
+			conn, err := wss.WebSocketConnect(cx, option.Server, &wss.ConnectParam{
 				Name: option.Remote,
-				Addr: metadata.RemoteAddress(),
-				Code: code,
 				Mode: mode,
 				Role: wss.RoleAgent,
 				Header: map[string][]string{
-					"origin": {"wless"},
+					"proto": {ctx.Wless},
 				},
 			})
 			if err != nil {
 				return nil, err
 			}
 
-			return conn, nil
+			return client.StreamConn(conn, metadata.RemoteAddress())
 		},
 	}, nil
 }
@@ -102,7 +100,7 @@ func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, er
 	}
 
 	return &directConnDispatcher{
-		createConn: func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
+		createConn: func(cx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
 			var mode wss.Mode
 			if option.Mode.IsDirect() {
 				mode = wss.ModeDirect
@@ -114,15 +112,12 @@ func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, er
 			// name: 直接连接, name is empty
 			//       远程代理, name not empty
 			// mode: ModeDirect | ModeForward
-			code := time.Now().Format("20060102150405__Agent")
-			conn, err := wss.WebSocketConnect(ctx, option.Server, &wss.ConnectParam{
+			conn, err := wss.WebSocketConnect(cx, option.Server, &wss.ConnectParam{
 				Name: option.Remote,
-				Addr: metadata.RemoteAddress(),
-				Code: code,
 				Mode: mode,
 				Role: wss.RoleAgent,
 				Header: map[string][]string{
-					"origin": {"vless"},
+					"proto": {ctx.Vless},
 				},
 			})
 			if err != nil {

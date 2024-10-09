@@ -3,11 +3,15 @@ package tcpover
 import (
 	"context"
 	"fmt"
+	"github.com/tiechui1994/tcpover/ctx"
+	"github.com/tiechui1994/tcpover/transport/vless"
+	"github.com/tiechui1994/tcpover/transport/wless"
 	"io"
 	"log"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/tiechui1994/tcpover/config"
 	"github.com/tiechui1994/tcpover/transport"
@@ -41,8 +45,7 @@ func (c *Client) Std(remoteName, remoteAddr string) error {
 		std = NewEchoReadWriteCloser()
 	}
 
-	code := time.Now().Format("20060102150405__Std")
-	if err := c.stdConnectServer(std, remoteName, remoteAddr, code); err != nil {
+	if err := c.stdConnectServer(std, remoteName, remoteAddr); err != nil {
 		log.Printf("Std::ConnectServer %v", err)
 		return err
 	}
@@ -72,7 +75,7 @@ func (c *Client) Serve(config config.RawConfig) error {
 	return nil
 }
 
-func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAddr, code string) error {
+func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAddr string) error {
 	onceCloseLocal := &OnceCloser{Closer: local}
 	defer onceCloseLocal.Close()
 
@@ -81,13 +84,36 @@ func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAd
 		mode = wss.ModeDirect
 	}
 
+	var proto = ctx.Wless
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Name: remoteName,
-		Addr: remoteAddr,
-		Code: code,
 		Role: wss.RoleConnector,
 		Mode: mode,
+		Header: map[string][]string{
+			"proto": {proto},
+		},
 	})
+	if err != nil {
+		return err
+	}
+
+	switch proto {
+	case ctx.Vless:
+		client, _ := vless.NewClient("")
+		host, port, err := net.SplitHostPort(remoteAddr)
+		if err != nil {
+			return err
+		}
+		portVal, _ := strconv.Atoi(port)
+		conn, err = client.StreamConn(conn, &vless.DstAddr{
+			UDP:      false,
+			AddrType: vless.AtypDomainName,
+			Addr:     append([]byte{uint8(len(host))}, []byte(host)...),
+			Port:     uint(portVal),
+		})
+	case ctx.Wless:
+		conn, err = wless.NewClient().StreamConn(conn, remoteAddr)
+	}
 	if err != nil {
 		return err
 	}

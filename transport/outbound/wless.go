@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tiechui1994/tcpover/transport/vless"
+	"github.com/tiechui1994/tcpover/transport/wless"
 	"io"
 	"log"
 	"net"
 	"regexp"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/tiechui1994/tcpover/ctx"
-	"github.com/tiechui1994/tcpover/mux"
 	"github.com/tiechui1994/tcpover/transport/wss"
 )
 
@@ -44,7 +44,6 @@ func NewWless(option WlessOption) (ctx.Proxy, error) {
 	var dispatcher dispatcher
 	var err error
 	if option.Mux {
-		dispatcher, err = newMuxConnDispatcher(option)
 	} else {
 		dispatcher, err = newWlessDirectConnDispatcher(option)
 	}
@@ -54,7 +53,7 @@ func NewWless(option WlessOption) (ctx.Proxy, error) {
 
 	if option.Direct == DirectRecvOnly || option.Direct == DirectSendRecv {
 		responder := PassiveResponder{server: option.Server}
-		responder.manage(option.Remote)
+		responder.manage(option.Local)
 	}
 
 	return &Wless{
@@ -77,119 +76,6 @@ type Wless struct {
 
 func (p *Wless) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
 	return p.dispatcher.DialContext(ctx, metadata)
-}
-
-type muxConnManager struct {
-	connCount    uint32
-	workersCount uint32
-
-	lock       sync.Mutex
-	workers    sync.Map
-	createConn func() (*mux.ClientWorker, error)
-}
-
-func newMuxConnDispatcher(option WlessOption) (*muxConnManager, error) {
-	c := &muxConnManager{createConn: func() (*mux.ClientWorker, error) {
-		var mode wss.Mode
-		if option.Mode.IsDirect() {
-			mode = wss.ModeDirectMux
-		} else if option.Mode.IsForward() {
-			mode = wss.ModeForwardMux
-		} else {
-			mode = wss.ModeDirectMux
-		}
-		// name: 直接连接, name is empty
-		//       远程代理, name not empty
-		// mode: ModeDirectMux | ModeForwardMux
-		code := time.Now().Format("20060102150405__MuxAgent")
-		conn, err := wss.WebSocketConnect(context.Background(), option.Server, &wss.ConnectParam{
-			Name: option.Remote,
-			Addr: "mux.cool:9527",
-			Code: code,
-			Mode: mode,
-			Role: wss.RoleAgent,
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		return mux.NewClientWorker(conn), nil
-	}}
-
-	err := c.create()
-	return c, err
-}
-
-func (c *muxConnManager) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
-	log.Println(metadata.SourceAddress(), "=>", metadata.RemoteAddress(), "mux")
-	upInput, upOutput := io.Pipe()
-	downInput, downOutput := io.Pipe()
-	destination := mux.Destination{
-		Network: mux.TargetNetworkTCP,
-		Address: metadata.RemoteAddress(),
-	}
-	err := c.dispatch(destination, NewPipeConn(downInput, upOutput, metadata))
-	if err != nil {
-		return nil, err
-	}
-
-	return NewPipeConn(upInput, downOutput, metadata), nil
-}
-
-func (c *muxConnManager) dispatch(destination mux.Destination, conn io.ReadWriteCloser) error {
-	var dispatch bool
-	var tryCount int
-again:
-	if tryCount > 1 {
-		log.Printf("retry to manay, please try again later")
-		return fmt.Errorf("retry to manay, please try again later")
-	}
-	c.workers.Range(func(key, value interface{}) bool {
-		worker := value.(*mux.ClientWorker)
-		if worker.Closed() {
-			log.Printf("worker %v close", key)
-			c.workers.Delete(key)
-			return true
-		}
-
-		if worker.Dispatch(destination, conn) {
-			dispatch = true
-			return false
-		}
-
-		return true
-	})
-
-	if !dispatch {
-		err := c.create()
-		if err != nil {
-			log.Printf("createClientWorker: %v", err)
-			return err
-		}
-		tryCount += 1
-		goto again
-	}
-
-	atomic.AddUint32(&c.connCount, 1)
-	if float64(atomic.LoadUint32(&c.connCount))/float64(atomic.LoadUint32(&c.workersCount)) > 7.5 {
-		go c.create()
-	}
-
-	return nil
-}
-
-func (c *muxConnManager) create() error {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-
-	worker, err := c.createConn()
-	if err != nil {
-		return err
-	}
-
-	c.workers.Store(time.Now(), worker)
-	atomic.AddUint32(&c.workersCount, 1)
-	return nil
 }
 
 type ControlMessage struct {
@@ -256,10 +142,10 @@ try:
 					code := cmd.Data["Code"].(string)
 					addr := cmd.Data["Addr"].(string)
 					network := cmd.Data["Network"].(string)
+					proto := cmd.Data["Proto"].(string)
 					if v := cmd.Data["Mux"]; v.(bool) {
-						err = c.connectLocalMux(code, network, addr)
 					} else {
-						err = c.connectLocal(code, network, addr)
+						err = c.connectLocal(code, network, addr, proto)
 					}
 					if err != nil {
 						log.Println("ConnectLocal:", err)
@@ -270,28 +156,7 @@ try:
 	}()
 }
 
-func (c *PassiveResponder) connectLocalMux(code, network, addr string) error {
-	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
-		Code: code,
-		Role: wss.RoleAgent,
-	})
-	if err != nil {
-		return err
-	}
-
-	remote := conn
-	onceCloseRemote := &OnceCloser{Closer: remote}
-	defer onceCloseRemote.Close()
-
-	_, err = mux.NewServerWorker(context.Background(), mux.NewDispatcher(), remote)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *PassiveResponder) connectLocal(code, network, addr string) error {
+func (c *PassiveResponder) connectLocal(code, network, addr, proto string) error {
 	var local io.ReadWriteCloser
 	var err error
 	local, err = net.Dial(network, addr)
@@ -305,7 +170,27 @@ func (c *PassiveResponder) connectLocal(code, network, addr string) error {
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Code: code,
 		Role: wss.RoleAgent,
+		Header: map[string][]string{
+			"proto": {proto},
+		},
 	})
+	if err != nil {
+		return err
+	}
+
+	switch proto {
+	case ctx.Vless:
+		client, _ := vless.NewClient("")
+		domain := "vless.mux"
+		conn, err = client.StreamConn(conn, &vless.DstAddr{
+			UDP:      false,
+			AddrType: vless.AtypDomainName,
+			Port:     443,
+			Addr:     append([]byte{uint8(len(domain))}, []byte(domain)...),
+		})
+	case ctx.Wless:
+		conn, err = wless.NewClient().StreamConn(conn, "wless.mux:443")
+	}
 	if err != nil {
 		return err
 	}
