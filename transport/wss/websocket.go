@@ -46,9 +46,8 @@ func (m Mode) IsMux() bool {
 
 type ConnectParam struct {
 	Name   string
-	Addr   string
-	Code   string
 	Role   string
+	Code   string
 	Mode   Mode
 	Header http.Header
 }
@@ -86,9 +85,8 @@ func RawWebSocketConnect(ctx context.Context, server string, param *ConnectParam
 
 	query := url.Values{}
 	query.Set("name", param.Name)
-	query.Set("addr", param.Addr)
-	query.Set("code", param.Code)
 	query.Set("rule", param.Role)
+	query.Set("code", param.Code)
 	query.Set("mode", string(param.Mode))
 	u := server + "?" + query.Encode()
 	conn, resp, err := dialer.DialContext(ctx, u, param.Header)

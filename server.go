@@ -1,8 +1,9 @@
 package tcpover
 
 import (
-	"context"
+	"encoding/binary"
 	"fmt"
+	"github.com/tiechui1994/tcpover/ctx"
 	"io"
 	"log"
 	"net"
@@ -15,13 +16,12 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/tiechui1994/tcpover/mux"
 	"github.com/tiechui1994/tcpover/transport/wss"
 )
 
 type PairGroup struct {
 	done chan struct{}
-	conn []*websocket.Conn
+	conn []net.Conn
 }
 
 type Server struct {
@@ -73,76 +73,164 @@ func (s *Server) copy(local, remote io.ReadWriteCloser, deferCallback func()) {
 	wg.Wait()
 }
 
-func (s *Server) directConnect(addr string, r *http.Request, w http.ResponseWriter) {
-	conn, err := net.Dial("tcp", addr)
+func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (remote net.Conn, addr string, err error) {
+	socket, err := s.upgrade.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("upgrade error: %v", err)
+		return nil, "", fmt.Errorf("upgrade error: %v", err)
+	}
+
+	remote = wss.NewWebsocketConn(socket)
+	defer func() {
+		if err != nil {
+			remote.Close()
+		} else {
+			log.Printf("connect addr: %v", addr)
+		}
+	}()
+	if r.Header.Get("proto") == "" || r.Header.Get("proto") == ctx.Wless {
+		buf := make([]byte, 1)
+		_, err = io.ReadFull(remote, buf)
+		if err != nil {
+			return nil, "", err
+		}
+		buf = make([]byte, int(buf[0]))
+		_, err = io.ReadFull(remote, buf)
+		if err != nil {
+			return nil, "", err
+		}
+		addr = string(buf)
+		return remote, addr, nil
+	} else {
+		// version(1) id(16) addon(1) type(1) port(2) addrType(1)
+		buf := make([]byte, 1+16+1+1+2+1)
+		_, err = io.ReadFull(remote, buf)
+		if err != nil {
+			return nil, "", err
+		}
+
+		port := binary.BigEndian.Uint16(buf[19:])
+		switch buf[len(buf)-1] {
+		case 1:
+			buf = make([]byte, 4)
+			_, err = io.ReadFull(remote, buf)
+			if err != nil {
+				return nil, "", err
+			}
+		case 3:
+			buf = make([]byte, 16)
+			_, err = io.ReadFull(remote, buf)
+			if err != nil {
+				return nil, "", err
+			}
+		case 2:
+			buf = make([]byte, 1)
+			_, err = io.ReadFull(remote, buf)
+			if err != nil {
+				return nil, "", err
+			}
+			buf = make([]byte, int(buf[0]))
+			_, err = io.ReadFull(remote, buf)
+			if err != nil {
+				return nil, "", err
+			}
+		}
+
+		addr = net.JoinHostPort(string(buf), fmt.Sprintf("%v", port))
+
+		buf = make([]byte, 1+1)
+		_, err = remote.Write(buf)
+		if err != nil {
+			return nil, "", err
+		}
+
+		return remote, addr, err
+	}
+}
+
+func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Request, w http.ResponseWriter) {
+	conn, addr, err := s.getConnectConnAndAddr(r, w)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// active connection
+	if name != "" {
+		manage, ok := s.manageConn.Load(name)
+		if !ok {
+			log.Printf("agent [%v] not running", name)
+			http.Error(w, fmt.Sprintf("Agent [%v] not connect", name), http.StatusBadRequest)
+			return
+		}
+
+		var proto = ctx.Wless
+		if r.Header.Get("proto") == ctx.Vless {
+			proto = ctx.Vless
+		}
+
+		code = time.Now().Format("20060102150405.9999")
+		data := map[string]interface{}{
+			"Code":    code,
+			"Addr":    addr,
+			"Network": "tcp",
+			"Mux":     mode.IsMux(),
+			"Proto":   proto,
+		}
+		_ = manage.(*websocket.Conn).WriteJSON(ControlMessage{
+			Command: CommandLink,
+			Data:    data,
+		})
+	}
+
+	// 配对连接
+	s.groupMux.Lock()
+	if pair, ok := s.groupConn[code]; ok {
+		pair.conn = append(pair.conn, conn)
+		s.groupMux.Unlock()
+
+		s.copy(pair.conn[0], pair.conn[1], func() {
+			close(pair.done)
+			s.groupMux.Lock()
+			delete(s.groupConn, code)
+			s.groupMux.Unlock()
+		})
+	} else {
+		pair := &PairGroup{
+			done: make(chan struct{}),
+			conn: []net.Conn{conn},
+		}
+		s.groupConn[code] = pair
+		s.groupMux.Unlock()
+		<-pair.done
+	}
+}
+
+func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
+	remote, addr, err := s.getConnectConnAndAddr(r, w)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	local, err := net.Dial("tcp", addr)
 	if err != nil {
 		log.Printf("tcp connect [%v] : %v", addr, err)
 		http.Error(w, fmt.Sprintf("tcp connect failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	socket, err := s.upgrade.Upgrade(w, r, nil)
+	s.copy(local, remote, nil)
+}
+
+func (s *Server) manageConnect(name string, r *http.Request, w http.ResponseWriter) {
+	conn, err := s.upgrade.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("upgrade error: %v", err)
 		http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	local := conn
-	remote := wss.NewWebsocketConn(socket)
-	if r.Header.Get("origin") == "" || r.Header.Get("origin") == "wless"{
-		s.copy(local, remote, nil)
-	} else {
-		buf := make([]byte, 1+16+1+1+2+1)
-		_, err = io.ReadFull(remote, buf)
-		if err != nil {
-			return
-		}
-
-		switch buf[len(buf)-1] {
-		case 1:
-			_, err = io.CopyN(io.Discard, remote, 4) // just discard
-		case 4:
-			_, err = io.CopyN(io.Discard, remote, 16) // just discard
-		case 3:
-			buf = make([]byte, 1)
-			_, err = io.ReadFull(remote, buf)
-			if err != nil {
-				return
-			}
-			_, err = io.CopyN(io.Discard, remote, int64(buf[0])) // just discard
-		}
-		if err != nil {
-			return
-		}
-
-		buf = make([]byte, 1+1)
-		_, err = remote.Write(buf)
-		if err != nil {
-			return
-		}
-		s.copy(local, remote, nil)
-	}
-}
-
-func (s *Server) muxConnect(r *http.Request, w http.ResponseWriter) {
-	socket, err := s.upgrade.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("upgrade error: %v", err)
-		http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	remote := wss.NewWebsocketConn(socket)
-	_, err = mux.NewServerWorker(context.Background(), mux.NewDispatcher(), remote)
-	if err != nil {
-		log.Printf("new mux serverWorker error: %v", err)
-		http.Error(w, fmt.Sprintf("Mux ServerWorker error: %v", err), http.StatusInternalServerError)
-		return
-	}
-}
-
-func (s *Server) manageConnect(name string, conn *websocket.Conn) {
 	s.manageConn.Store(name, conn)
 	defer s.manageConn.Delete(name)
 
@@ -186,85 +274,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := r.URL.Query().Get("name")
-	addr := r.URL.Query().Get("addr")
 	code := r.URL.Query().Get("code")
 	role := r.URL.Query().Get("rule")
 	mode := wss.Mode(r.URL.Query().Get("mode"))
 
-	log.Printf("enter connections:%v, code:%v, name:%v, role:%v", atomic.AddInt32(&s.conn, +1), code, name, role)
+	log.Printf("enter connections:%v, code:%v, name:%v, role:%v, mode:%v", atomic.AddInt32(&s.conn, +1), code, name, role, mode)
 	defer func() {
-		log.Printf("leave connections:%v  code:%v, name:%v, role:%v", atomic.AddInt32(&s.conn, -1), code, name, role)
+		log.Printf("leave connections:%v  code:%v, name:%v, role:%v, mode:%v", atomic.AddInt32(&s.conn, -1), code, name, role, mode)
 	}()
 
-	regex := regexp.MustCompile(`^([a-zA-Z0-9.]+):(\d+)$`)
-
 	// 情况1: 直接连接
-	if (role == wss.RoleAgent || role == wss.RoleConnector) && mode.IsDirect() && regex.MatchString(addr) {
+	if (role == wss.RoleAgent || role == wss.RoleConnector) && mode.IsDirect() {
 		if mode.IsMux() {
-			s.muxConnect(r, w)
 		} else {
-			s.directConnect(addr, r, w)
+			s.directConnect(r, w)
 		}
 		return
 	}
 
 	// 情况2: 主动连接方, 需要通过被动方
-	if (role == wss.RoleAgent || role == wss.RoleConnector) && name != "" {
-		manage, ok := s.manageConn.Load(name)
-		if !ok {
-			log.Printf("agent [%v] not running", name)
-			http.Error(w, fmt.Sprintf("Agent [%v] not connect", name), http.StatusBadRequest)
-			return
-		}
-
-		data := map[string]interface{}{
-			"Code":    code,
-			"Addr":    addr,
-			"Network": "tcp",
-			"Mux":     mode.IsMux(),
-		}
-		_ = manage.(*websocket.Conn).WriteJSON(ControlMessage{
-			Command: CommandLink,
-			Data:    data,
-		})
-	}
-
-	conn, err := s.upgrade.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("upgrade error: %v", err)
-		http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusBadRequest)
+	if role == wss.RoleAgent || role == wss.RoleConnector {
+		s.forwardConnect(name, code, mode, r, w)
 		return
 	}
 
 	// 情况3: 管理员通道
 	if role == wss.RoleManager {
-		s.manageConnect(name, conn)
+		s.manageConnect(name, r, w)
 		return
-	}
-
-	// 情況4: 正常配对连接
-	s.groupMux.Lock()
-	if pair, ok := s.groupConn[code]; ok {
-		pair.conn = append(pair.conn, conn)
-		s.groupMux.Unlock()
-
-		local := wss.NewWebsocketConn(pair.conn[0])
-		remote := wss.NewWebsocketConn(pair.conn[1])
-
-		s.copy(local, remote, func() {
-			close(pair.done)
-			s.groupMux.Lock()
-			delete(s.groupConn, code)
-			s.groupMux.Unlock()
-		})
-	} else {
-		pair := &PairGroup{
-			done: make(chan struct{}),
-			conn: []*websocket.Conn{conn},
-		}
-		s.groupConn[code] = pair
-		s.groupMux.Unlock()
-		<-pair.done
 	}
 }
 
