@@ -25,6 +25,13 @@ func ParseProxy(mapping map[string]interface{}) (ctx.Proxy, error) {
 			break
 		}
 		proxy, err = outbound.NewWless(*muxOption)
+	case ctx.Vless:
+		muxOption := &outbound.VlessOption{}
+		err = decoder.Decode(mapping, muxOption)
+		if err != nil {
+			break
+		}
+		proxy, err = outbound.NewVless(*muxOption)
 	case ctx.Direct:
 		proxy = outbound.NewDirect()
 	default:
