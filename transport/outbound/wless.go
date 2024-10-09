@@ -44,9 +44,9 @@ func NewWless(option WlessOption) (ctx.Proxy, error) {
 	var dispatcher dispatcher
 	var err error
 	if option.Mux {
-		dispatcher, err = newMuxConnManager(option)
+		dispatcher, err = newMuxConnDispatcher(option)
 	} else {
-		dispatcher, err = newDirectConnManager(option)
+		dispatcher, err = newWlessDirectConnDispatcher(option)
 	}
 	if err != nil {
 		return nil, err
@@ -79,46 +79,6 @@ func (p *Wless) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Co
 	return p.dispatcher.DialContext(ctx, metadata)
 }
 
-type directConnManager struct {
-	createConn func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error)
-}
-
-func newDirectConnManager(option WlessOption) (*directConnManager, error) {
-	return &directConnManager{
-		createConn: func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
-			var mode wss.Mode
-			if option.Mode.IsDirect() {
-				mode = wss.ModeDirect
-			} else if option.Mode.IsForward() {
-				mode = wss.ModeForward
-			} else {
-				mode = wss.ModeDirect
-			}
-			// name: 直接连接, name is empty
-			//       远程代理, name not empty
-			// mode: ModeDirect | ModeForward
-			code := time.Now().Format("20060102150405__Agent")
-			conn, err := wss.WebSocketConnect(ctx, option.Server, &wss.ConnectParam{
-				Name: option.Remote,
-				Addr: metadata.RemoteAddress(),
-				Code: code,
-				Mode: mode,
-				Role: wss.RoleAgent,
-			})
-			if err != nil {
-				return nil, err
-			}
-
-			return conn, nil
-		},
-	}, nil
-}
-
-func (c *directConnManager) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
-	log.Println(metadata.SourceAddress(), "=>", metadata.RemoteAddress())
-	return c.createConn(ctx, metadata)
-}
-
 type muxConnManager struct {
 	connCount    uint32
 	workersCount uint32
@@ -128,7 +88,7 @@ type muxConnManager struct {
 	createConn func() (*mux.ClientWorker, error)
 }
 
-func newMuxConnManager(option WlessOption) (*muxConnManager, error) {
+func newMuxConnDispatcher(option WlessOption) (*muxConnManager, error) {
 	c := &muxConnManager{createConn: func() (*mux.ClientWorker, error) {
 		var mode wss.Mode
 		if option.Mode.IsDirect() {

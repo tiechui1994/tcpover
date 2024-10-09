@@ -2,7 +2,6 @@ package tcpover
 
 import (
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/tiechui1994/tcpover/transport/wss"
 )
 
@@ -50,58 +48,6 @@ func (c *StdReadWriteCloser) Close() error {
 		return err2
 	}
 	return nil
-}
-
-type socketReadWriteCloser struct {
-	lock   sync.Mutex
-	conn   *websocket.Conn
-	reader io.Reader
-}
-
-func NewSocketReadWriteCloser(socket *websocket.Conn) io.ReadWriteCloser {
-	return &socketReadWriteCloser{conn: socket}
-}
-
-func (s *socketReadWriteCloser) Close() error {
-	return s.conn.Close()
-}
-
-func (s *socketReadWriteCloser) Write(p []byte) (n int, err error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-
-	err = s.conn.WriteMessage(websocket.BinaryMessage, p)
-	return len(p), err
-}
-
-func (s *socketReadWriteCloser) Read(b []byte) (int, error) {
-	for {
-		reader, err := s.getReader()
-		if err != nil {
-			return 0, err
-		}
-
-		nBytes, err := reader.Read(b)
-		if errors.Is(err, io.EOF) {
-			s.reader = nil
-			continue
-		}
-		//s.dump(b[:nBytes])
-		return nBytes, err
-	}
-}
-
-func (s *socketReadWriteCloser) getReader() (io.Reader, error) {
-	if s.reader != nil {
-		return s.reader, nil
-	}
-
-	_, reader, err := s.conn.NextReader()
-	if err != nil {
-		return nil, err
-	}
-	s.reader = reader
-	return reader, nil
 }
 
 type echoReadWriteCloser struct {

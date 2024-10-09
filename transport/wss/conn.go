@@ -114,6 +114,13 @@ func (wsc *websocketConn) SetWriteDeadline(t time.Time) error {
 	return wsc.conn.SetWriteDeadline(t)
 }
 
+func NewWebsocketConn(conn *websocket.Conn) net.Conn  {
+	return &websocketConn{
+		conn:       conn,
+		remoteAddr: conn.RemoteAddr(),
+	}
+}
+
 func StreamWebSocketConn(conn net.Conn, c *WebsocketConfig) (net.Conn, error) {
 	dialer := &websocket.Dialer{
 		NetDial: func(network, addr string) (net.Conn, error) {

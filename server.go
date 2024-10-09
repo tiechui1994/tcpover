@@ -89,8 +89,40 @@ func (s *Server) directConnect(addr string, r *http.Request, w http.ResponseWrit
 	}
 
 	local := conn
-	remote := NewSocketReadWriteCloser(socket)
-	s.copy(local, remote, nil)
+	remote := wss.NewWebsocketConn(socket)
+	if r.Header.Get("origin") == "" || r.Header.Get("origin") == "wless"{
+		s.copy(local, remote, nil)
+	} else {
+		buf := make([]byte, 1+16+1+1+2+1)
+		_, err = io.ReadFull(remote, buf)
+		if err != nil {
+			return
+		}
+
+		switch buf[len(buf)-1] {
+		case 1:
+			_, err = io.CopyN(io.Discard, remote, 4) // just discard
+		case 4:
+			_, err = io.CopyN(io.Discard, remote, 16) // just discard
+		case 3:
+			buf = make([]byte, 1)
+			_, err = io.ReadFull(remote, buf)
+			if err != nil {
+				return
+			}
+			_, err = io.CopyN(io.Discard, remote, int64(buf[0])) // just discard
+		}
+		if err != nil {
+			return
+		}
+
+		buf = make([]byte, 1+1)
+		_, err = remote.Write(buf)
+		if err != nil {
+			return
+		}
+		s.copy(local, remote, nil)
+	}
 }
 
 func (s *Server) muxConnect(r *http.Request, w http.ResponseWriter) {
@@ -101,7 +133,7 @@ func (s *Server) muxConnect(r *http.Request, w http.ResponseWriter) {
 		return
 	}
 
-	remote := NewSocketReadWriteCloser(socket)
+	remote := wss.NewWebsocketConn(socket)
 	_, err = mux.NewServerWorker(context.Background(), mux.NewDispatcher(), remote)
 	if err != nil {
 		log.Printf("new mux serverWorker error: %v", err)
@@ -216,8 +248,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		pair.conn = append(pair.conn, conn)
 		s.groupMux.Unlock()
 
-		local := NewSocketReadWriteCloser(pair.conn[0])
-		remote := NewSocketReadWriteCloser(pair.conn[1])
+		local := wss.NewWebsocketConn(pair.conn[0])
+		remote := wss.NewWebsocketConn(pair.conn[1])
 
 		s.copy(local, remote, func() {
 			close(pair.done)

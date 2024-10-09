@@ -30,9 +30,9 @@ func NewVless(option VlessOption) (ctx.Proxy, error) {
 	var dispatcher dispatcher
 	var err error
 	if option.Mux {
-		dispatcher, err = newMuxConnManager(option.WlessOption)
+		dispatcher, err = newMuxConnDispatcher(option.WlessOption)
 	} else {
-		dispatcher, err = newDirectConnDispatcher(option)
+		dispatcher, err = newVlessDirectConnDispatcher(option)
 	}
 	if err != nil {
 		return nil, err
@@ -61,6 +61,88 @@ func (p *Vless) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Co
 	return p.dispatcher.DialContext(ctx, metadata)
 }
 
+func newWlessDirectConnDispatcher(option WlessOption) (*directConnDispatcher, error) {
+	return &directConnDispatcher{
+		createConn: func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
+			var mode wss.Mode
+			if option.Mode.IsDirect() {
+				mode = wss.ModeDirect
+			} else if option.Mode.IsForward() {
+				mode = wss.ModeForward
+			} else {
+				mode = wss.ModeDirect
+			}
+			// name: 直接连接, name is empty
+			//       远程代理, name not empty
+			// mode: ModeDirect | ModeForward
+			code := time.Now().Format("20060102150405__Agent")
+			conn, err := wss.WebSocketConnect(ctx, option.Server, &wss.ConnectParam{
+				Name: option.Remote,
+				Addr: metadata.RemoteAddress(),
+				Code: code,
+				Mode: mode,
+				Role: wss.RoleAgent,
+				Header: map[string][]string{
+					"origin": {"wless"},
+				},
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			return conn, nil
+		},
+	}, nil
+}
+
+func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, error) {
+	client, err := vless.NewClient(option.UUID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &directConnDispatcher{
+		createConn: func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
+			var mode wss.Mode
+			if option.Mode.IsDirect() {
+				mode = wss.ModeDirect
+			} else if option.Mode.IsForward() {
+				mode = wss.ModeForward
+			} else {
+				mode = wss.ModeDirect
+			}
+			// name: 直接连接, name is empty
+			//       远程代理, name not empty
+			// mode: ModeDirect | ModeForward
+			code := time.Now().Format("20060102150405__Agent")
+			conn, err := wss.WebSocketConnect(ctx, option.Server, &wss.ConnectParam{
+				Name: option.Remote,
+				Addr: metadata.RemoteAddress(),
+				Code: code,
+				Mode: mode,
+				Role: wss.RoleAgent,
+				Header: map[string][]string{
+					"origin": {"vless"},
+				},
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			return client.StreamConn(conn, parseVlessAddr(metadata))
+		},
+	}, nil
+}
+
+type directConnDispatcher struct {
+	createConn func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error)
+}
+
+func (c *directConnDispatcher) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
+	log.Println(metadata.SourceAddress(), "=>", metadata.RemoteAddress())
+	return c.createConn(ctx, metadata)
+}
+
 func parseVlessAddr(metadata *ctx.Metadata) *vless.DstAddr {
 	var addrType byte
 	var addr []byte
@@ -87,49 +169,4 @@ func parseVlessAddr(metadata *ctx.Metadata) *vless.DstAddr {
 		Addr:     addr,
 		Port:     uint(port),
 	}
-}
-
-type directConnDispatcher struct {
-	createConn func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error)
-}
-
-func newDirectConnDispatcher(option VlessOption) (*directConnDispatcher, error) {
-	client, err := vless.NewClient(option.UUID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &directConnDispatcher{
-		createConn: func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
-			var mode wss.Mode
-			if option.Mode.IsDirect() {
-				mode = wss.ModeDirect
-			} else if option.Mode.IsForward() {
-				mode = wss.ModeForward
-			} else {
-				mode = wss.ModeDirect
-			}
-			// name: 直接连接, name is empty
-			//       远程代理, name not empty
-			// mode: ModeDirect | ModeForward
-			code := time.Now().Format("20060102150405__Agent")
-			conn, err := wss.WebSocketConnect(ctx, option.Server, &wss.ConnectParam{
-				Name: option.Remote,
-				Addr: metadata.RemoteAddress(),
-				Code: code,
-				Mode: mode,
-				Role: wss.RoleAgent,
-			})
-			if err != nil {
-				return nil, err
-			}
-
-			return client.StreamConn(conn, parseVlessAddr(metadata))
-		},
-	}, nil
-}
-
-func (c *directConnDispatcher) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
-	log.Println(metadata.SourceAddress(), "=>", metadata.RemoteAddress())
-	return c.createConn(ctx, metadata)
 }
