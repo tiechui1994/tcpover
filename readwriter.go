@@ -7,23 +7,10 @@ import (
 	"log"
 	random "math/rand"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/tiechui1994/tcpover/transport/wss"
 )
-
-type OnceCloser struct {
-	io.Closer
-	once sync.Once
-}
-
-func (c *OnceCloser) Close() (err error) {
-	c.once.Do(func() {
-		err = c.Closer.Close()
-	})
-	return err
-}
 
 type StdReadWriteCloser struct {
 	io.ReadCloser

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func Relay(leftConn, rightConn net.Conn) {
+func Relay(leftConn, rightConn net.Conn, deferCall func()) {
 	ch := make(chan error)
 
 	go func() {
@@ -18,5 +18,7 @@ func Relay(leftConn, rightConn net.Conn) {
 	_, _ = io.Copy(rightConn, leftConn)
 	_ = rightConn.SetReadDeadline(time.Now())
 	<-ch
-}
 
+	leftConn.Close()
+	rightConn.Close()
+}

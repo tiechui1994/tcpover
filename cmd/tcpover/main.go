@@ -71,7 +71,7 @@ func main() {
 		var proxies []map[string]interface{}
 
 		proxies = append(proxies, map[string]interface{}{
-			"type":   ctx.Vless,
+			"type":   ctx.Wless,
 			"name":   "proxy1",
 			"local":  *name,
 			"remote": "",

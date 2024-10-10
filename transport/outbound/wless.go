@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/tiechui1994/tcpover/transport/vless"
-	"github.com/tiechui1994/tcpover/transport/wless"
-	"io"
 	"log"
 	"net"
 	"regexp"
 	"sync"
 	"time"
 
+	"github.com/xtaci/smux"
+
 	"github.com/tiechui1994/tcpover/ctx"
+	"github.com/tiechui1994/tcpover/transport/common/bufio"
+	"github.com/tiechui1994/tcpover/transport/vless"
+	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
 )
 
@@ -41,12 +43,7 @@ func NewWless(option WlessOption) (ctx.Proxy, error) {
 		return nil, fmt.Errorf("server must be startsWith wss:// or ws://")
 	}
 
-	var dispatcher dispatcher
-	var err error
-	if option.Mux {
-	} else {
-		dispatcher, err = newWlessDirectConnDispatcher(option)
-	}
+	dispatcher, err := newWlessDirectConnDispatcher(option)
 	if err != nil {
 		return nil, err
 	}
@@ -144,6 +141,7 @@ try:
 					network := cmd.Data["Network"].(string)
 					proto := cmd.Data["Proto"].(string)
 					if v := cmd.Data["Mux"]; v.(bool) {
+						err = c.connectLocalMux(code, network, addr, proto)
 					} else {
 						err = c.connectLocal(code, network, addr, proto)
 					}
@@ -157,16 +155,6 @@ try:
 }
 
 func (c *PassiveResponder) connectLocal(code, network, addr, proto string) error {
-	var local io.ReadWriteCloser
-	var err error
-	local, err = net.Dial(network, addr)
-	if err != nil {
-		return err
-	}
-
-	onceCloseLocal := &OnceCloser{Closer: local}
-	defer onceCloseLocal.Close()
-
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Code: code,
 		Role: wss.RoleAgent,
@@ -181,7 +169,7 @@ func (c *PassiveResponder) connectLocal(code, network, addr, proto string) error
 	switch proto {
 	case ctx.Vless:
 		client, _ := vless.NewClient("")
-		domain := "vless.mux"
+		domain := "mux.cool.com"
 		conn, err = client.StreamConn(conn, &vless.DstAddr{
 			UDP:      false,
 			AddrType: vless.AtypDomainName,
@@ -189,114 +177,98 @@ func (c *PassiveResponder) connectLocal(code, network, addr, proto string) error
 			Addr:     append([]byte{uint8(len(domain))}, []byte(domain)...),
 		})
 	case ctx.Wless:
-		conn, err = wless.NewClient().StreamConn(conn, "wless.mux:443")
+		domain := "mux.cool.com:443"
+		conn, err = wless.NewClient().StreamConn(conn, domain)
 	}
 	if err != nil {
 		return err
 	}
 
+	// link
 	remote := conn
-	onceCloseRemote := &OnceCloser{Closer: remote}
-	defer onceCloseLocal.Close()
-
-	wg := &sync.WaitGroup{}
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-
-		defer onceCloseRemote.Close()
-		_, err = io.CopyBuffer(remote, local, make([]byte, wss.SocketBufferLength))
-		log.Printf("ConnectLocal::error1: %v", err)
-	}()
-
-	go func() {
-		defer wg.Done()
-
-		defer onceCloseLocal.Close()
-		_, err = io.CopyBuffer(local, remote, make([]byte, wss.SocketBufferLength))
-		log.Printf("ConnectLocal::error2: %v", err)
-	}()
-
-	wg.Wait()
-	return nil
-}
-
-type OnceCloser struct {
-	io.Closer
-	once sync.Once
-}
-
-func (c *OnceCloser) Close() (err error) {
-	c.once.Do(func() {
-		err = c.Closer.Close()
-	})
-	return err
-}
-
-func NewPipeConn(reader *io.PipeReader, writer *io.PipeWriter, meta *ctx.Metadata) net.Conn {
-	return &pipeConn{
-		reader: reader,
-		writer: writer,
-		local:  &addr{network: meta.NetWork, addr: meta.SourceAddress()},
-		remote: &addr{network: meta.NetWork, addr: meta.RemoteAddress()},
-	}
-}
-
-type addr struct {
-	network string
-	addr    string
-}
-
-func (a *addr) Network() string {
-	return a.network
-}
-
-func (a *addr) String() string {
-	return a.addr
-}
-
-type pipeConn struct {
-	reader *io.PipeReader
-	writer *io.PipeWriter
-	local  net.Addr
-	remote net.Addr
-}
-
-func (p *pipeConn) Close() error {
-	err := p.reader.Close()
+	local, err := net.Dial(network, addr)
 	if err != nil {
 		return err
 	}
 
-	err = p.writer.Close()
-	return err
-}
-
-func (p *pipeConn) Read(b []byte) (n int, err error) {
-	return p.reader.Read(b)
-}
-
-func (p *pipeConn) Write(b []byte) (n int, err error) {
-	return p.writer.Write(b)
-}
-
-func (p *pipeConn) LocalAddr() net.Addr {
-	return p.local
-}
-
-func (p *pipeConn) RemoteAddr() net.Addr {
-	return p.remote
-}
-
-func (p *pipeConn) SetDeadline(t time.Time) error {
+	bufio.Relay(local, remote, nil)
 	return nil
 }
 
-func (p *pipeConn) SetReadDeadline(t time.Time) error {
-	return nil
-}
+func (c *PassiveResponder) connectLocalMux(code, network, addr, proto string) error {
+	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
+		Code: code,
+		Role: wss.RoleAgent,
+		Header: map[string][]string{
+			"proto": {proto},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		conn.Close()
+	}()
 
-func (p *pipeConn) SetWriteDeadline(t time.Time) error {
+	switch proto {
+	case ctx.Vless:
+		client, _ := vless.NewClient("")
+		domain := "mux.cool.com"
+		conn, err = client.StreamConn(conn, &vless.DstAddr{
+			UDP:      false,
+			AddrType: vless.AtypDomainName,
+			Port:     443,
+			Addr:     append([]byte{uint8(len(domain))}, []byte(domain)...),
+		})
+	case ctx.Wless:
+		domain := "mux.cool.com:443"
+		conn, err = wless.NewClient().StreamConn(conn, domain)
+	}
+	if err != nil {
+		return err
+	}
+
+	// mux link
+	session, err := smux.Server(conn, &DefaultMuxConfig)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for {
+			conn, err := session.AcceptStream()
+			if err != nil && err == smux.ErrTimeout {
+				continue
+			}
+			if err != nil {
+				log.Printf("session.AcceptStream: %v", err)
+				return
+			}
+
+			var addr string
+			switch proto {
+			case ctx.Vless:
+				_, _, addr, err = vless.ReadConnFirstPacket(conn)
+			case ctx.Wless:
+				addr, err = wless.ReadConnFirstPacket(conn)
+			}
+			if err != nil {
+				conn.Close()
+				continue
+			}
+
+			remote := conn
+			local, err := net.Dial(network, addr)
+			if err != nil {
+				conn.Close()
+				continue
+			}
+
+			go bufio.Relay(local, remote, func() {
+				log.Printf("close: %v", addr)
+			})
+		}
+	}()
+
 	return nil
 }

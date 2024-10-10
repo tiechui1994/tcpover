@@ -8,6 +8,7 @@ go 1.17
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/tiechui1994/tool v1.5.12
+	github.com/xtaci/smux v1.5.31
 	golang.org/x/net v0.29.0
 )
 
