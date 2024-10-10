@@ -2,6 +2,7 @@ package wless
 
 import (
 	"bytes"
+	"io"
 	"net"
 )
 
@@ -36,4 +37,22 @@ func newConn(conn net.Conn, dst string) (*Conn, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+
+func ReadConnFirstPacket(conn net.Conn) (addr string, err error) {
+	buf := make([]byte, 1)
+	_, err = io.ReadFull(conn, buf)
+	if err != nil {
+		return addr, err
+	}
+
+	buf = make([]byte, int(buf[0]))
+	_, err = io.ReadFull(conn, buf)
+	if err != nil {
+		return addr, err
+	}
+
+	addr = string(buf)
+	return  addr, nil
 }

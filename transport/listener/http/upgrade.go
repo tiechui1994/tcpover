@@ -38,7 +38,7 @@ func handleUpgrade(conn net.Conn, request *http.Request) {
 	left, right := net.Pipe()
 	go func() {
 		remote, _ := net.Dial("tcp", dstAddr.String())
-		bufio.Relay(right, remote)
+		bufio.Relay(right, remote, nil)
 	}()
 
 	bufferedLeft := bufio.NewBufferedConn(left)
@@ -60,6 +60,6 @@ func handleUpgrade(conn net.Conn, request *http.Request) {
 		return
 	}
 	if resp.StatusCode == http.StatusSwitchingProtocols {
-		bufio.Relay(bufferedLeft, conn)
+		bufio.Relay(bufferedLeft, conn, nil)
 	}
 }

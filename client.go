@@ -76,9 +76,6 @@ func (c *Client) Serve(config config.RawConfig) error {
 }
 
 func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAddr string) error {
-	onceCloseLocal := &OnceCloser{Closer: local}
-	defer onceCloseLocal.Close()
-
 	var mode = wss.ModeForward
 	if remoteName == "" || remoteName == remoteAddr {
 		mode = wss.ModeDirect
@@ -117,24 +114,21 @@ func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAd
 	if err != nil {
 		return err
 	}
-
 	remote := conn
-	onceCloseRemote := &OnceCloser{Closer: remote}
-	defer onceCloseLocal.Close()
 
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 
-		defer onceCloseRemote.Close()
+		defer local.Close()
 		_, err = io.CopyBuffer(remote, local, make([]byte, wss.SocketBufferLength))
 	}()
 
 	go func() {
 		defer wg.Done()
 
-		defer onceCloseLocal.Close()
+		defer remote.Close()
 		_, err = io.CopyBuffer(local, remote, make([]byte, wss.SocketBufferLength))
 	}()
 

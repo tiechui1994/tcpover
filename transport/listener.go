@@ -56,7 +56,7 @@ func handleTCPConn(connCtx ctx.ConnContext) {
 		return
 	}
 
-	bufio.Relay(remote, connCtx.Conn())
+	bufio.Relay(remote, connCtx.Conn(), nil)
 }
 
 var (

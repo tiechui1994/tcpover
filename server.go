@@ -1,10 +1,8 @@
 package tcpover
 
 import (
-	"encoding/binary"
 	"fmt"
-	"github.com/tiechui1994/tcpover/ctx"
-	"io"
+	"github.com/tiechui1994/tcpover/transport/common/bufio"
 	"log"
 	"net"
 	"net/http"
@@ -16,7 +14,12 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tiechui1994/tcpover/ctx"
+	"github.com/tiechui1994/tcpover/transport/outbound"
+	"github.com/tiechui1994/tcpover/transport/vless"
+	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
+	"github.com/xtaci/smux"
 )
 
 type PairGroup struct {
@@ -41,38 +44,6 @@ func NewServer() *Server {
 	}
 }
 
-func (s *Server) copy(local, remote io.ReadWriteCloser, deferCallback func()) {
-	onceCloseLocal := &OnceCloser{Closer: local}
-	onceCloseRemote := &OnceCloser{Closer: remote}
-
-	defer func() {
-		_ = onceCloseRemote.Close()
-		_ = onceCloseLocal.Close()
-		if deferCallback != nil {
-			deferCallback()
-		}
-	}()
-
-	wg := &sync.WaitGroup{}
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-
-		defer onceCloseRemote.Close()
-		_, _ = io.CopyBuffer(remote, local, make([]byte, wss.SocketBufferLength))
-	}()
-
-	go func() {
-		defer wg.Done()
-
-		defer onceCloseLocal.Close()
-		_, _ = io.CopyBuffer(local, remote, make([]byte, wss.SocketBufferLength))
-	}()
-
-	wg.Wait()
-}
-
 func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (remote net.Conn, addr string, err error) {
 	socket, err := s.upgrade.Upgrade(w, r, nil)
 	if err != nil {
@@ -88,62 +59,15 @@ func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (
 			log.Printf("connect addr: %v", addr)
 		}
 	}()
-	if r.Header.Get("proto") == "" || r.Header.Get("proto") == ctx.Wless {
-		buf := make([]byte, 1)
-		_, err = io.ReadFull(remote, buf)
-		if err != nil {
-			return nil, "", err
-		}
-		buf = make([]byte, int(buf[0]))
-		_, err = io.ReadFull(remote, buf)
-		if err != nil {
-			return nil, "", err
-		}
-		addr = string(buf)
-		return remote, addr, nil
-	} else {
-		// version(1) id(16) addon(1) type(1) port(2) addrType(1)
-		buf := make([]byte, 1+16+1+1+2+1)
-		_, err = io.ReadFull(remote, buf)
-		if err != nil {
-			return nil, "", err
-		}
 
-		port := binary.BigEndian.Uint16(buf[19:])
-		switch buf[len(buf)-1] {
-		case 1:
-			buf = make([]byte, 4)
-			_, err = io.ReadFull(remote, buf)
-			if err != nil {
-				return nil, "", err
-			}
-		case 3:
-			buf = make([]byte, 16)
-			_, err = io.ReadFull(remote, buf)
-			if err != nil {
-				return nil, "", err
-			}
-		case 2:
-			buf = make([]byte, 1)
-			_, err = io.ReadFull(remote, buf)
-			if err != nil {
-				return nil, "", err
-			}
-			buf = make([]byte, int(buf[0]))
-			_, err = io.ReadFull(remote, buf)
-			if err != nil {
-				return nil, "", err
-			}
-		}
-
-		addr = net.JoinHostPort(string(buf), fmt.Sprintf("%v", port))
-
-		buf = make([]byte, 1+1)
-		_, err = remote.Write(buf)
-		if err != nil {
-			return nil, "", err
-		}
-
+	var proto = r.Header.Get("proto")
+	log.Printf("proto %v", proto)
+	switch proto {
+	case ctx.Vless:
+		_, _, addr, err = vless.ReadConnFirstPacket(remote)
+		return remote, addr, err
+	default:
+		addr, err = wless.ReadConnFirstPacket(remote)
 		return remote, addr, err
 	}
 }
@@ -189,7 +113,7 @@ func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Reques
 		pair.conn = append(pair.conn, conn)
 		s.groupMux.Unlock()
 
-		s.copy(pair.conn[0], pair.conn[1], func() {
+		bufio.Relay(pair.conn[0], pair.conn[1], func() {
 			close(pair.done)
 			s.groupMux.Lock()
 			delete(s.groupConn, code)
@@ -220,7 +144,60 @@ func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
 		return
 	}
 
-	s.copy(local, remote, nil)
+	bufio.Relay(local, remote, nil)
+}
+
+func (s *Server) directConnectMux(r *http.Request, w http.ResponseWriter) {
+	remote, _, err := s.getConnectConnAndAddr(r, w)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	defer func() {
+		remote.Close()
+	}()
+
+	session, err := smux.Server(remote, &outbound.DefaultMuxConfig)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Printf("smux Server: %v", err)
+		return
+	}
+
+	var proto = r.Header.Get("proto")
+
+	for {
+		conn, err := session.AcceptStream()
+		if err != nil && err == smux.ErrTimeout {
+			continue
+		}
+		if err != nil {
+			return
+		}
+
+		var addr string
+		switch proto {
+		case ctx.Vless:
+			_, _, addr, err = vless.ReadConnFirstPacket(conn)
+		default:
+			addr, err = wless.ReadConnFirstPacket(conn)
+		}
+		if err != nil {
+			conn.Close()
+			continue
+		}
+
+		local, err := net.Dial("tcp", addr)
+		if err != nil {
+			conn.Close()
+			continue
+		}
+		remote := conn
+		go bufio.Relay(local, remote, func() {
+			log.Printf("mux close: %v, count: %v", addr, session.NumStreams())
+		})
+	}
 }
 
 func (s *Server) manageConnect(name string, r *http.Request, w http.ResponseWriter) {
@@ -286,6 +263,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 情况1: 直接连接
 	if (role == wss.RoleAgent || role == wss.RoleConnector) && mode.IsDirect() {
 		if mode.IsMux() {
+			s.directConnectMux(r, w)
 		} else {
 			s.directConnect(r, w)
 		}

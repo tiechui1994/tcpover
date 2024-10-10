@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 )
@@ -88,4 +89,52 @@ func newConn(conn net.Conn, client *Client, dst *DstAddr) (*Conn, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+func ReadConnFirstPacket(conn net.Conn) (id string, _type int, addr string, err error) {
+	// version(1) id(16) addon(1) type(1) port(2) addrType(1)
+	buf := make([]byte, 1+16+1+1+2+1)
+	_, err = io.ReadFull(conn, buf)
+	if err != nil {
+		return id, _type, addr, err
+	}
+
+	id = string(buf[1:17])
+	_type = int(buf[18])
+
+	port := binary.BigEndian.Uint16(buf[19:])
+	switch buf[len(buf)-1] {
+	case AtypIPv4:
+		buf = make([]byte, 4)
+		_, err = io.ReadFull(conn, buf)
+		if err != nil {
+			return id, _type, addr, err
+		}
+	case AtypIPv6:
+		buf = make([]byte, 16)
+		_, err = io.ReadFull(conn, buf)
+		if err != nil {
+			return id, _type, addr, err
+		}
+	case AtypDomainName:
+		buf = make([]byte, 1)
+		_, err = io.ReadFull(conn, buf)
+		if err != nil {
+			return id, _type, addr, err
+		}
+		buf = make([]byte, int(buf[0]))
+		_, err = io.ReadFull(conn, buf)
+		if err != nil {
+			return id, _type, addr, err
+		}
+	}
+
+	addr = net.JoinHostPort(string(buf), fmt.Sprintf("%v", port))
+	buf = make([]byte, 1+1)
+	_, err = conn.Write(buf)
+	if err != nil {
+		return id, _type, addr, err
+	}
+
+	return id, _type, addr, nil
 }
