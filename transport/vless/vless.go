@@ -12,6 +12,7 @@ const (
 const (
 	CommandTCP byte = 1
 	CommandUDP byte = 2
+	CommandMux byte = 3
 )
 
 // Addr types
@@ -27,11 +28,12 @@ type DstAddr struct {
 	AddrType byte
 	Addr     []byte
 	Port     uint
+	Mux      bool
 }
 
 // Client is vless connection generator
 type Client struct {
-	uuid     *UUID
+	uuid *UUID
 }
 
 // StreamConn return a Conn with net.Conn and DstAddr
@@ -47,6 +49,6 @@ func NewClient(uuidStr string) (*Client, error) {
 	}
 
 	return &Client{
-		uuid:     &uid,
+		uuid: &uid,
 	}, nil
 }

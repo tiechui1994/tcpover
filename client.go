@@ -107,6 +107,7 @@ func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAd
 			AddrType: vless.AtypDomainName,
 			Addr:     append([]byte{uint8(len(host))}, []byte(host)...),
 			Port:     uint(portVal),
+			Mux:      false,
 		})
 	case ctx.Wless:
 		conn, err = wless.NewClient().StreamConn(conn, remoteAddr)

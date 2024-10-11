@@ -147,6 +147,8 @@ func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
 	bufio.Relay(local, remote, nil)
 }
 
+
+
 func (s *Server) directConnectMux(r *http.Request, w http.ResponseWriter) {
 	remote, _, err := s.getConnectConnAndAddr(r, w)
 	if err != nil {
