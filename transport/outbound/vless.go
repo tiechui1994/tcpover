@@ -163,7 +163,7 @@ func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, er
 					return nil, err
 				}
 				if link {
-					return client.StreamConn(conn, parseVlessAddr(metadata, true))
+					return conn, vless.WriteMuxAddr(conn, metadata.RemoteAddress())
 				}
 
 				conn, err = connect(cx, option.Mode, option.Server, option.Remote, ctx.Vless)
@@ -181,6 +181,13 @@ func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, er
 				if err != nil {
 					return nil, err
 				}
+
+				// 额外数据
+				err = vless.WriteVersionProto(conn)
+				if err != nil {
+					return nil, err
+				}
+
 				session, err := smux.Client(conn, &DefaultMuxConfig)
 				if err != nil {
 					return nil, err
@@ -194,7 +201,7 @@ func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, er
 				return nil, err
 			}
 
-			return client.StreamConn(conn, parseVlessAddr(metadata, false))
+			return client.StreamConn(conn, parseVlessAddr(metadata))
 		},
 	}, nil
 }
@@ -255,7 +262,7 @@ func (c *directConnDispatcher) DialContext(ctx context.Context, metadata *ctx.Me
 	return c.createConn(ctx, metadata)
 }
 
-func parseVlessAddr(metadata *ctx.Metadata, mux bool) *vless.DstAddr {
+func parseVlessAddr(metadata *ctx.Metadata) *vless.DstAddr {
 	var addrType byte
 	var addr []byte
 	switch metadata.AddrType() {
@@ -280,6 +287,5 @@ func parseVlessAddr(metadata *ctx.Metadata, mux bool) *vless.DstAddr {
 		AddrType: addrType,
 		Addr:     addr,
 		Port:     uint(port),
-		Mux:      mux,
 	}
 }

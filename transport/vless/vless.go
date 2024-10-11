@@ -28,7 +28,6 @@ type DstAddr struct {
 	AddrType byte
 	Addr     []byte
 	Port     uint
-	Mux      bool
 }
 
 // Client is vless connection generator

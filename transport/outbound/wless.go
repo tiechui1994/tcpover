@@ -137,13 +137,12 @@ try:
 				log.Printf("ControlMessage => cmd %v, data: %v", cmd.Command, cmd.Data)
 				go func() {
 					code := cmd.Data["Code"].(string)
-					addr := cmd.Data["Addr"].(string)
 					network := cmd.Data["Network"].(string)
 					proto := cmd.Data["Proto"].(string)
 					if v := cmd.Data["Mux"]; v.(bool) {
-						err = c.connectLocalMux(code, network, addr, proto)
+						err = c.connectLocalMux(code, network, proto)
 					} else {
-						err = c.connectLocal(code, network, addr, proto)
+						err = c.connectLocal(code, network, proto)
 					}
 					if err != nil {
 						log.Println("ConnectLocal:", err)
@@ -154,7 +153,7 @@ try:
 	}()
 }
 
-func (c *PassiveResponder) connectLocal(code, network, addr, proto string) error {
+func (c *PassiveResponder) connectLocal(code, network, proto string) error {
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Code: code,
 		Role: wss.RoleAgent,
@@ -165,20 +164,16 @@ func (c *PassiveResponder) connectLocal(code, network, addr, proto string) error
 	if err != nil {
 		return err
 	}
+	defer func() {
+		conn.Close()
+	}()
 
+	var addr string
 	switch proto {
 	case ctx.Vless:
-		client, _ := vless.NewClient("")
-		domain := "mux.cool.com"
-		conn, err = client.StreamConn(conn, &vless.DstAddr{
-			UDP:      false,
-			AddrType: vless.AtypDomainName,
-			Port:     443,
-			Addr:     append([]byte{uint8(len(domain))}, []byte(domain)...),
-		})
-	case ctx.Wless:
-		domain := "mux.cool.com:443"
-		conn, err = wless.NewClient().StreamConn(conn, domain)
+		_, _, addr, err = vless.ReadConnFirstPacket(conn, false)
+	default:
+		addr, err = wless.ReadConnFirstPacket(conn)
 	}
 	if err != nil {
 		return err
@@ -195,7 +190,7 @@ func (c *PassiveResponder) connectLocal(code, network, addr, proto string) error
 	return nil
 }
 
-func (c *PassiveResponder) connectLocalMux(code, network, addr, proto string) error {
+func (c *PassiveResponder) connectLocalMux(code, network, proto string) error {
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Code: code,
 		Role: wss.RoleAgent,
@@ -212,17 +207,9 @@ func (c *PassiveResponder) connectLocalMux(code, network, addr, proto string) er
 
 	switch proto {
 	case ctx.Vless:
-		client, _ := vless.NewClient("")
-		domain := "mux.cool.com"
-		conn, err = client.StreamConn(conn, &vless.DstAddr{
-			UDP:      false,
-			AddrType: vless.AtypDomainName,
-			Port:     443,
-			Addr:     append([]byte{uint8(len(domain))}, []byte(domain)...),
-		})
-	case ctx.Wless:
-		domain := "mux.cool.com:443"
-		conn, err = wless.NewClient().StreamConn(conn, domain)
+		_, _, _, err = vless.ReadConnFirstPacket(conn, true)
+	default:
+		_, err = wless.ReadConnFirstPacket(conn)
 	}
 	if err != nil {
 		return err
@@ -240,6 +227,9 @@ func (c *PassiveResponder) connectLocalMux(code, network, addr, proto string) er
 			if err != nil && err == smux.ErrTimeout {
 				continue
 			}
+			if wss.IsClose(err) {
+				return
+			}
 			if err != nil {
 				log.Printf("session.AcceptStream: %v", err)
 				return
@@ -248,7 +238,7 @@ func (c *PassiveResponder) connectLocalMux(code, network, addr, proto string) er
 			var addr string
 			switch proto {
 			case ctx.Vless:
-				_, _, addr, err = vless.ReadConnFirstPacket(conn)
+				addr, err = vless.ReadMuxAddr(conn)
 			case ctx.Wless:
 				addr, err = wless.ReadConnFirstPacket(conn)
 			}

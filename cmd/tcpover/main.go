@@ -74,10 +74,10 @@ func main() {
 			"type":   ctx.Wless,
 			"name":   "proxy1",
 			"local":  *name,
-			"remote": "",
+			"remote": *name,
 			"direct": outbound.DirectSendRecv,
 			"server": *serverEndpoint,
-			"mode":   wss.ModeDirect,
+			"mode":   wss.ModeForward,
 			"mux":    *mux,
 		})
 
