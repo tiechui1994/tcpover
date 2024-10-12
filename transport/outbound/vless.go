@@ -3,29 +3,18 @@ package outbound
 import (
 	"context"
 	"fmt"
-	"log"
-	"net"
-	"regexp"
-	"sync"
-	"time"
-
 	"github.com/tiechui1994/tcpover/ctx"
+	"github.com/tiechui1994/tcpover/transport/mux"
 	"github.com/tiechui1994/tcpover/transport/socks5"
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
 	"github.com/xtaci/smux"
+	"log"
+	"net"
+	"regexp"
+	"sync"
 )
-
-var DefaultMuxConfig = smux.Config{
-	Version:           1,
-	KeepAliveInterval: 10 * time.Second,
-	KeepAliveTimeout:  30 * time.Second,
-	MaxFrameSize:      32768,
-	MaxReceiveBuffer:  4194304,
-	MaxStreamBuffer:   65536,
-	KeepAliveDisabled: true,
-}
 
 type VlessOption struct {
 	WlessOption
@@ -126,7 +115,7 @@ func newWlessDirectConnDispatcher(option WlessOption) (*directConnDispatcher, er
 				if err != nil {
 					return nil, err
 				}
-				session, err := smux.Client(conn, &DefaultMuxConfig)
+				session, err := smux.Client(conn, &mux.DefaultMuxConfig)
 				if err != nil {
 					return nil, err
 				}
@@ -153,47 +142,25 @@ func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, er
 		return nil, err
 	}
 
-	pool := &sync.Map{}
+	muxClient := mux.NewClient(func() (net.Conn, error) {
+		conn, err := connect(context.Background(), option.Mode, option.Server, option.Remote, ctx.Vless)
+		if err != nil {
+			return nil, err
+		}
+
+		domain := "mux.cool.com"
+		return client.StreamConn(conn, &vless.DstAddr{
+			UDP: false,
+			AddrType: vless.AtypDomainName,
+			Addr: append([]byte{byte(len(domain))}, []byte(domain)...),
+			Port: 443,
+		})
+	})
+
 	return &directConnDispatcher{
 		createConn: func(cx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
 			if option.Mux {
-			again:
-				conn, link, err := openMuxConnectConn(pool)
-				if err != nil {
-					return nil, err
-				}
-				if link {
-					return conn, vless.WriteMuxAddr(conn, metadata.RemoteAddress())
-				}
-
-				conn, err = connect(cx, option.Mode, option.Server, option.Remote, ctx.Vless)
-				if err != nil {
-					return nil, err
-				}
-
-				domain := "mux.cool.com"
-				conn, err = client.StreamConn(conn, &vless.DstAddr{
-					UDP:      false,
-					AddrType: vless.AtypDomainName,
-					Addr:     append([]byte{uint8(len(domain))}, []byte(domain)...),
-					Port:     443,
-				})
-				if err != nil {
-					return nil, err
-				}
-
-				// 额外数据
-				err = vless.WriteVersionProto(conn)
-				if err != nil {
-					return nil, err
-				}
-
-				session, err := smux.Client(conn, &DefaultMuxConfig)
-				if err != nil {
-					return nil, err
-				}
-				pool.Store(session, session)
-				goto again
+				return muxClient.DialContext(cx, metadata)
 			}
 
 			conn, err := connect(cx, option.Mode, option.Server, option.Remote, ctx.Vless)

@@ -2,7 +2,6 @@ package tcpover
 
 import (
 	"fmt"
-	"github.com/tiechui1994/tcpover/transport/common/bufio"
 	"log"
 	"net"
 	"net/http"
@@ -15,11 +14,11 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/tiechui1994/tcpover/ctx"
-	"github.com/tiechui1994/tcpover/transport/outbound"
+	"github.com/tiechui1994/tcpover/transport/common/bufio"
+	"github.com/tiechui1994/tcpover/transport/mux"
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
-	"github.com/xtaci/smux"
 )
 
 type PairGroup struct {
@@ -44,7 +43,7 @@ func NewServer() *Server {
 	}
 }
 
-func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter, mux bool) (remote net.Conn, addr string, err error) {
+func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (remote net.Conn, addr string, err error) {
 	socket, err := s.upgrade.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("upgrade error: %v", err)
@@ -64,7 +63,7 @@ func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter, m
 	log.Printf("proto %v", proto)
 	switch proto {
 	case ctx.Vless:
-		_, _, addr, err = vless.ReadConnFirstPacket(remote, mux)
+		_, _, addr, err = vless.ReadConnFirstPacket(remote)
 		return remote, addr, err
 	default:
 		addr, err = wless.ReadConnFirstPacket(remote)
@@ -133,7 +132,7 @@ func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Reques
 }
 
 func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
-	remote, addr, err := s.getConnectConnAndAddr(r, w, false)
+	remote, addr, err := s.getConnectConnAndAddr(r, w)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -150,7 +149,7 @@ func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
 }
 
 func (s *Server) directConnectMux(r *http.Request, w http.ResponseWriter) {
-	remote, _, err := s.getConnectConnAndAddr(r, w, true)
+	remote, _, err := s.getConnectConnAndAddr(r, w)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -160,50 +159,10 @@ func (s *Server) directConnectMux(r *http.Request, w http.ResponseWriter) {
 		remote.Close()
 	}()
 
-	session, err := smux.Server(remote, &outbound.DefaultMuxConfig)
+	server := mux.NewServer()
+	err = server.NewConnection(remote)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		log.Printf("smux Server: %v", err)
-		return
-	}
-
-	var proto = r.Header.Get("proto")
-
-	for {
-		conn, err := session.AcceptStream()
-		if err != nil && err == smux.ErrTimeout {
-			continue
-		}
-		if wss.IsClose(err) {
-			return
-		}
-		if err != nil  {
-			log.Println("err: ", err)
-			return
-		}
-
-		var addr string
-		switch proto {
-		case ctx.Vless:
-			addr, err = vless.ReadMuxAddr(conn)
-		default:
-			addr, err = wless.ReadConnFirstPacket(conn)
-		}
-		if err != nil {
-			conn.Close()
-			continue
-		}
-
-		local, err := net.Dial("tcp", addr)
-		if err != nil {
-			conn.Close()
-			continue
-		}
-		remote := conn
-
-		go bufio.Relay(local, remote, func() {
-			log.Printf("mux close: %v, count: %v", addr, session.NumStreams())
-		})
+		log.Printf("NewConnection: %v", err)
 	}
 }
 
