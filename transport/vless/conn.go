@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
-	"strconv"
 )
 
 type Conn struct {
@@ -93,7 +91,7 @@ func newConn(conn net.Conn, client *Client, dst *DstAddr) (*Conn, error) {
 	return c, nil
 }
 
-func ReadConnFirstPacket(conn net.Conn, mux bool) (id string, command int, addr string, err error) {
+func ReadConnFirstPacket(conn net.Conn) (id string, command int, addr string, err error) {
 	// version(1) id(16) addon(1) command(1) port(2) addrType(1)
 	buf := make([]byte, 1+16+1+1)
 	_, err = io.ReadFull(conn, buf)
@@ -134,7 +132,6 @@ func ReadConnFirstPacket(conn net.Conn, mux bool) (id string, command int, addr 
 			if err != nil {
 				return id, command, addr, err
 			}
-			log.Printf("%v", buf[0]) // 20 => 43
 			buf = make([]byte, int(buf[0]))
 			_, err = io.ReadFull(conn, buf)
 			if err != nil {
@@ -143,13 +140,7 @@ func ReadConnFirstPacket(conn net.Conn, mux bool) (id string, command int, addr 
 			addr = net.JoinHostPort(string(buf), fmt.Sprintf("%v", port))
 		}
 
-		if mux {
-			// mux version, mux protocol
-			buf := make([]byte, 2)
-			io.ReadFull(conn, buf)
-		}
-
-		// Reply Vless
+		// reply vless response
 		buf = make([]byte, 1+1)
 		_, err = conn.Write(buf)
 		if err != nil {
@@ -160,73 +151,3 @@ func ReadConnFirstPacket(conn net.Conn, mux bool) (id string, command int, addr 
 	return id, command, addr, nil
 }
 
-func ReadMuxAddr(conn net.Conn) (addr string, err error) {
-	// version(1) addon(1) addrType(1)
-	buf := make([]byte, 3)
-	_, err = io.ReadFull(conn, buf)
-	if err != nil {
-		return addr, err
-	}
-
-	switch buf[2] {
-	case AtypIPv4:
-		buf = make([]byte, 4+2)
-		_, err = io.ReadFull(conn, buf)
-		if err != nil {
-			return addr, err
-		}
-		addr = net.JoinHostPort(net.IP(buf[0:4]).String(), fmt.Sprintf("%d", binary.BigEndian.Uint16(buf[4:6])))
-	case AtypIPv6:
-		buf = make([]byte, 16+2)
-		_, err = io.ReadFull(conn, buf)
-		if err != nil {
-			return addr, err
-		}
-		addr = net.JoinHostPort(net.IP(buf[0:16]).String(), fmt.Sprintf("%d", binary.BigEndian.Uint16(buf[16:18])))
-	case AtypDomainName:
-		buf = make([]byte, 1)
-		_, err = io.ReadFull(conn, buf)
-		if err != nil {
-			return addr, err
-		}
-		log.Printf("%v", buf[0])
-		buf = make([]byte, int(buf[0])+2)
-		_, err = io.ReadFull(conn, buf)
-		if err != nil {
-			return addr, err
-		}
-		addr = net.JoinHostPort(string(buf[:len(buf)-2]), fmt.Sprintf("%d", binary.BigEndian.Uint16(buf[len(buf)-2:])))
-	}
-
-	// Reply Mux Success
-	buf = make([]byte, 1)
-	_, err = conn.Write(buf)
-	if err != nil {
-		return addr, err
-	}
-
-	return addr, nil
-}
-
-func WriteMuxAddr(conn net.Conn, addr string) error {
-	buf := &bytes.Buffer{}
-
-	buf.WriteByte(Version) // protocol version
-	buf.WriteByte(0)       // addon data length. 0 means no addon data
-
-	buf.WriteByte(AtypDomainName)
-	host, port, _ := net.SplitHostPort(addr)
-	buf.WriteByte(byte(len(host)))
-	buf.WriteString(host)
-
-	v, _ := strconv.Atoi(port)
-	binary.Write(buf, binary.BigEndian, uint16(v)) // 2
-	_, err := conn.Write(buf.Bytes())
-	return err
-}
-
-func WriteVersionProto(conn net.Conn)  error{
-	buf := make([]byte, 2)
-	_, err := conn.Write(buf)
-	return err
-}

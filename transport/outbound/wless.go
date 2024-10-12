@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tiechui1994/tcpover/transport/mux"
 	"log"
 	"net"
 	"regexp"
 	"sync"
 	"time"
-
-	"github.com/xtaci/smux"
 
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/common/bufio"
@@ -171,7 +170,7 @@ func (c *PassiveResponder) connectLocal(code, network, proto string) error {
 	var addr string
 	switch proto {
 	case ctx.Vless:
-		_, _, addr, err = vless.ReadConnFirstPacket(conn, false)
+		_, _, addr, err = vless.ReadConnFirstPacket(conn)
 	default:
 		addr, err = wless.ReadConnFirstPacket(conn)
 	}
@@ -207,7 +206,7 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string) error {
 
 	switch proto {
 	case ctx.Vless:
-		_, _, _, err = vless.ReadConnFirstPacket(conn, true)
+		_, _, _, err = vless.ReadConnFirstPacket(conn)
 	default:
 		_, err = wless.ReadConnFirstPacket(conn)
 	}
@@ -215,48 +214,11 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string) error {
 		return err
 	}
 
-	// mux link
-	session, err := smux.Server(conn, &DefaultMuxConfig)
-	if err != nil {
-		return err
-	}
-
+	server := mux.NewServer()
 	go func() {
-		for {
-			conn, err := session.AcceptStream()
-			if err != nil && err == smux.ErrTimeout {
-				continue
-			}
-			if wss.IsClose(err) {
-				return
-			}
-			if err != nil {
-				log.Printf("session.AcceptStream: %v", err)
-				return
-			}
-
-			var addr string
-			switch proto {
-			case ctx.Vless:
-				addr, err = vless.ReadMuxAddr(conn)
-			case ctx.Wless:
-				addr, err = wless.ReadConnFirstPacket(conn)
-			}
-			if err != nil {
-				conn.Close()
-				continue
-			}
-
-			remote := conn
-			local, err := net.Dial(network, addr)
-			if err != nil {
-				conn.Close()
-				continue
-			}
-
-			go bufio.Relay(local, remote, func() {
-				log.Printf("close: %v", addr)
-			})
+		err = server.NewConnection(conn)
+		if err != nil {
+			log.Printf("NewConnection: %v", err)
 		}
 	}()
 
