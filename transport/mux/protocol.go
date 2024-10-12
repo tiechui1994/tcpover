@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/xtaci/smux"
 )
 
@@ -22,6 +21,12 @@ var DefaultMuxConfig = smux.Config{
 	MaxStreamBuffer:   65536,
 	KeepAliveDisabled: true,
 }
+
+const (
+	AtypIPv4       = 0x01
+	AtypIPv6       = 0x04
+	AtypDomainName = 0x03
+)
 
 const (
 	Version0 = 0
@@ -109,7 +114,7 @@ func EncodeStreamRequest(request StreamRequest) []byte {
 
 	addr, port, _ := net.SplitHostPort(destination)
 	v, _ := strconv.Atoi(port)
-	writeAddrPort(&buffer, vless.AtypDomainName, addr, uint16(v))
+	writeAddrPort(&buffer, AtypDomainName, addr, uint16(v))
 	return buffer.Bytes()
 }
 
@@ -121,10 +126,10 @@ type StreamRequest struct {
 func writeAddrPort(buf *bytes.Buffer, addrType byte, addr string, port uint16) {
 	buf.WriteByte(addrType)
 	switch addrType {
-	case vless.AtypIPv4:
+	case AtypIPv4:
 		buf.WriteString(addr)
 		binary.Write(buf, binary.BigEndian, port)
-	case vless.AtypDomainName:
+	case AtypDomainName:
 		buf.WriteByte(byte(len(addr)))
 		buf.WriteString(addr)
 		binary.Write(buf, binary.BigEndian, port)
@@ -140,21 +145,21 @@ func readAddrPort(conn io.Reader) (addr string, err error) {
 	}
 
 	switch buf[0] {
-	case vless.AtypIPv4:
+	case AtypIPv4:
 		buf = make([]byte, 4+2)
 		_, err = io.ReadFull(conn, buf)
 		if err != nil {
 			return addr, err
 		}
 		addr = net.JoinHostPort(net.IP(buf[0:4]).String(), fmt.Sprintf("%d", binary.BigEndian.Uint16(buf[4:6])))
-	case vless.AtypIPv6:
+	case AtypIPv6:
 		buf = make([]byte, 16+2)
 		_, err = io.ReadFull(conn, buf)
 		if err != nil {
 			return addr, err
 		}
 		addr = net.JoinHostPort(net.IP(buf[0:16]).String(), fmt.Sprintf("%d", binary.BigEndian.Uint16(buf[16:18])))
-	case vless.AtypDomainName:
+	case AtypDomainName:
 		buf = make([]byte, 1)
 		_, err = io.ReadFull(conn, buf)
 		if err != nil {

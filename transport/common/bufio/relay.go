@@ -3,7 +3,6 @@ package bufio
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"strings"
@@ -42,16 +41,17 @@ func (s *dump) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-func Relay(leftConn, rightConn net.Conn, deferCall func()) {
+func Relay(leftConn, rightConn net.Conn, deferCall func(err error)) {
+	var err error
 	defer func() {
+		leftConn.Close()
+		rightConn.Close()
 		if deferCall != nil {
-			deferCall()
+			deferCall(err)
 		}
 	}()
 
 	ch := make(chan error)
-	leftConn = New(leftConn)
-	rightConn = New(rightConn)
 
 	go func() {
 		_, err := io.Copy(leftConn, rightConn)
@@ -61,8 +61,5 @@ func Relay(leftConn, rightConn net.Conn, deferCall func()) {
 
 	_, _ = io.Copy(rightConn, leftConn)
 	_ = rightConn.SetReadDeadline(time.Now())
-	log.Printf("Relay: %v", <-ch)
-
-	leftConn.Close()
-	rightConn.Close()
+	err = <-ch
 }

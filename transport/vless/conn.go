@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 )
 
@@ -139,6 +140,8 @@ func ReadConnFirstPacket(conn net.Conn) (id string, command int, addr string, er
 			}
 			addr = net.JoinHostPort(string(buf), fmt.Sprintf("%v", port))
 		}
+
+		log.Printf("read addr: %v", addr)
 
 		// reply vless response
 		buf = make([]byte, 1+1)

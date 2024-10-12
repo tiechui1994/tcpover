@@ -78,7 +78,6 @@ func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Reques
 		http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusInternalServerError)
 		return
 	}
-
 	conn := wss.NewWebsocketConn(socket)
 
 	// active connection
@@ -114,7 +113,7 @@ func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Reques
 		pair.conn = append(pair.conn, conn)
 		s.groupMux.Unlock()
 
-		bufio.Relay(pair.conn[0], pair.conn[1], func() {
+		bufio.Relay(pair.conn[0], pair.conn[1], func(err error) {
 			close(pair.done)
 			s.groupMux.Lock()
 			delete(s.groupConn, code)
