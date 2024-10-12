@@ -22,7 +22,7 @@ func (c *serverConn) Write(b []byte) (n int, err error) {
 	buffer.Write(b)
 	_, err = c.Conn.Write(buffer.Bytes())
 	if err != nil {
-		log.Printf("write status: %v", err)
+		log.Printf("server write mux status: %v", err)
 		return
 	}
 	c.responseWritten = true
@@ -39,7 +39,7 @@ type clientConn struct {
 func (c *clientConn) readResponse() error {
 	response, err := ReadStreamResponse(c.Conn)
 	if err != nil {
-		log.Printf("read response: %v", err)
+		log.Printf("client read mux status: %v", err)
 		return err
 	}
 	if response.Status == statusError {
@@ -70,7 +70,6 @@ func (c *clientConn) Write(b []byte) (n int, err error) {
 		Destination: c.destination,
 	}
 	data := EncodeStreamRequest(request)
-	log.Printf("EncodeStreamRequest: %v", data)
 	_, err = c.Conn.Write(append(data, b...))
 	if err != nil {
 		return

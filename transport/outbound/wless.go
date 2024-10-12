@@ -156,6 +156,7 @@ func (c *PassiveResponder) connectLocal(code, network, proto string) error {
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Code: code,
 		Role: wss.RoleAgent,
+		Mode: wss.ModeForward,
 		Header: map[string][]string{
 			"proto": {proto},
 		},
@@ -193,6 +194,7 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string) error {
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Code: code,
 		Role: wss.RoleAgent,
+		Mode: wss.ModeForwardMux,
 		Header: map[string][]string{
 			"proto": {proto},
 		},
@@ -200,9 +202,6 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		conn.Close()
-	}()
 
 	switch proto {
 	case ctx.Vless:
@@ -216,6 +215,7 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string) error {
 
 	server := mux.NewServer()
 	go func() {
+		defer conn.Close()
 		err = server.NewConnection(conn)
 		if err != nil {
 			log.Printf("NewConnection: %v", err)

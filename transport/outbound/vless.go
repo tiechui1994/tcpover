@@ -9,11 +9,9 @@ import (
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
-	"github.com/xtaci/smux"
 	"log"
 	"net"
 	"regexp"
-	"sync"
 )
 
 type VlessOption struct {
@@ -82,46 +80,24 @@ func handleOption(option *WlessOption) {
 
 func newWlessDirectConnDispatcher(option WlessOption) (*directConnDispatcher, error) {
 	client := wless.NewClient()
-	pool := &sync.Map{}
 
 	handleOption(&option)
 	log.Printf("mux: %v, %v", option.Mux, option.Mode)
 
+	muxClient := mux.NewClient(func() (net.Conn, error) {
+		conn, err := connect(context.Background(), option.Mode, option.Server, option.Remote, ctx.Wless)
+		if err != nil {
+			return nil, err
+		}
+
+		domain := "sp.mux.sing-box.arpa:444"
+		return client.StreamConn(conn, domain)
+	})
+
 	return &directConnDispatcher{
 		createConn: func(cx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
 			if option.Mux {
-				try := 0
-			again:
-				if try > 2 {
-					log.Printf("try too manay times")
-					return nil, fmt.Errorf("try too manay times")
-				}
-				conn, link, err := openMuxConnectConn(pool)
-				if err != nil {
-					return nil, err
-				}
-				// mux conn link
-				if link {
-					return client.StreamConn(conn, metadata.RemoteAddress())
-				}
-
-				// mux session link
-				conn, err = connect(cx, option.Mode, option.Server, option.Remote, ctx.Wless)
-				if err != nil {
-					return nil, err
-				}
-				domain := "mux.cool.com:443"
-				conn, err = client.StreamConn(conn, domain)
-				if err != nil {
-					return nil, err
-				}
-				session, err := smux.Client(conn, &mux.DefaultMuxConfig)
-				if err != nil {
-					return nil, err
-				}
-				pool.Store(session, session)
-				try += 1
-				goto again
+				return muxClient.DialContext(cx, metadata)
 			}
 
 			conn, err := connect(cx, option.Mode, option.Server, option.Remote, ctx.Wless)
@@ -148,12 +124,12 @@ func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, er
 			return nil, err
 		}
 
-		domain := "mux.cool.com"
+		domain := "sp.mux.sing-box.arpa"
 		return client.StreamConn(conn, &vless.DstAddr{
 			UDP: false,
 			AddrType: vless.AtypDomainName,
 			Addr: append([]byte{byte(len(domain))}, []byte(domain)...),
-			Port: 443,
+			Port: 444,
 		})
 	})
 
@@ -196,36 +172,8 @@ func connect(ctx context.Context, optionMode wss.Mode, optionServer, remoteName 
 	return conn, nil
 }
 
-func openMuxConnectConn(pool *sync.Map) (net.Conn, bool, error) {
-	var mux *smux.Session
-	pool.Range(func(key, value interface{}) bool {
-		session := value.(*smux.Session)
-		if session.IsClosed() || session.NumStreams() > 8 {
-			return true
-		}
-		mux = session
-		return false
-	})
-
-	if mux == nil {
-		return nil, false, nil
-	}
-
-	conn, err := mux.OpenStream()
-	if err != nil {
-		if err == smux.ErrGoAway {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-
-	conn.GetDieCh()
-
-	return conn, true, nil
-}
-
 func (c *directConnDispatcher) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
-	log.Println(metadata.SourceAddress(), "=>", metadata.RemoteAddress())
+	log.Println("dispatcher: ", metadata.SourceAddress(), "=>", metadata.RemoteAddress())
 	return c.createConn(ctx, metadata)
 }
 
