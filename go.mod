@@ -1,6 +1,3 @@
-// +heroku goVersion go1.17
-// +heroku install ./cmd/tcpover
-
 module github.com/tiechui1994/tcpover
 
 go 1.17
