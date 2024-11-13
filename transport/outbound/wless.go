@@ -9,6 +9,7 @@ import (
 	"net"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tiechui1994/tcpover/ctx"
@@ -48,7 +49,7 @@ func NewWless(option WlessOption) (ctx.Proxy, error) {
 	}
 
 	if option.Direct == DirectRecvOnly || option.Direct == DirectSendRecv {
-		responder := PassiveResponder{server: option.Server}
+		responder := &PassiveResponder{server: option.Server}
 		responder.manage(option.Local)
 	}
 
@@ -84,6 +85,7 @@ const (
 )
 
 type PassiveResponder struct {
+	count  int32
 	server string
 }
 
@@ -213,9 +215,13 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string) error {
 		return err
 	}
 
+	log.Printf("conncet count: %v", atomic.AddInt32(&(c.count), 1))
 	server := mux.NewServer()
 	go func() {
-		defer conn.Close()
+		defer func() {
+			log.Printf("disConncet count: %v", atomic.AddInt32(&(c.count), -1))
+			conn.Close()
+		}()
 		err = server.NewConnection(conn)
 		if err != nil {
 			log.Printf("NewConnection: %v", err)
