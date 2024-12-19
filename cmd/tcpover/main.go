@@ -2,13 +2,13 @@ package main
 
 import (
 	"flag"
-	"github.com/tiechui1994/tcpover/transport/outbound"
 	"log"
 	"net/http"
 
 	"github.com/tiechui1994/tcpover"
 	"github.com/tiechui1994/tcpover/config"
 	"github.com/tiechui1994/tcpover/ctx"
+	"github.com/tiechui1994/tcpover/transport/outbound"
 	"github.com/tiechui1994/tcpover/transport/wss"
 )
 
