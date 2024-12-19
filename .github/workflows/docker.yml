@@ -27,5 +27,5 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           push: true
-          file: docker/agent.Dockerfile
+          file: docker/ubuntu.Dockerfile
           tags: tiechui1994/tcpover-agent:latest
