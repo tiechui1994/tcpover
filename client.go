@@ -3,9 +3,6 @@ package tcpover
 import (
 	"context"
 	"fmt"
-	"github.com/tiechui1994/tcpover/ctx"
-	"github.com/tiechui1994/tcpover/transport/vless"
-	"github.com/tiechui1994/tcpover/transport/wless"
 	"io"
 	"log"
 	"net"
@@ -14,7 +11,10 @@ import (
 	"sync"
 
 	"github.com/tiechui1994/tcpover/config"
+	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport"
+	"github.com/tiechui1994/tcpover/transport/vless"
+	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
 )
 
