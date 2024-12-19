@@ -17,8 +17,15 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build and push
+      - name: Build and push server
         uses: docker/build-push-action@v4
         with:
           push: true
+          file: docker/server.Dockerfile
           tags: tiechui1994/tcpover:latest
+      - name: Build and push agent
+        uses: docker/build-push-action@v4
+        with:
+          push: true
+          file: docker/agent.Dockerfile
+          tags: tiechui1994/tcpover-agent:latest
