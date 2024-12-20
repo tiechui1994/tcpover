@@ -3,10 +3,10 @@
 apt-get --quiet update && \
 export DEBIAN_FRONTEND=noninteractive && \
 export TZ=Asia/Shanghai && \
-apt-get --quiet install --yes openssh-server net-tools iputils-ping iproute2 iptables openssl vim
+apt-get --quiet install --yes openssh-server net-tools iputils-ping iproute2 iptables openssl vim curl
 
-wget https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-x86_64.tgz -O /tmp && \
-tar xf ookla-speedtest-1.2.0-linux-x86_64.tgz -C /tmp && mv /tmp/speedtest /root
+wget https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-x86_64.tgz -O /tmp/ookla.tgz && \
+tar xf /tmp/ookla.tgz -C /tmp && mv /tmp/speedtest /root
 
 wget https://github.com/yt-dlp/yt-dlp/releases/download/2024.12.13/yt-dlp -O /tmp/yt-dlp && \
 chmod a+x /tmp/yt-dlp && mv /tmp/yt-dlp /root
