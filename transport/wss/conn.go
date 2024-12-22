@@ -223,10 +223,12 @@ func IsClose(err error) bool {
 	if strings.Contains(err.Error(), "use of closed network connection") ||
 		strings.Contains(err.Error(), "broken pipe") ||
 		strings.Contains(err.Error(), "connection reset by peer") {
+		fmt.Println("contains broken", err)
 		return true
 	}
 
 	if errors.Is(err, websocket.ErrCloseSent) {
+		fmt.Println("websocket close sent", err)
 		return true
 	}
 

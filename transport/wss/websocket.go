@@ -101,11 +101,11 @@ func RawWebSocketConnect(ctx context.Context, server string, param *ConnectParam
 	}
 
 	go func() {
-		ticker := time.NewTicker(3 * time.Second)
+		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 
 		for range ticker.C {
-			err = conn.WriteControl(websocket.PingMessage, []byte(nil), time.Now().Add(time.Second))
+			err = conn.WriteControl(websocket.PingMessage, []byte("hello world"), time.Now().Add(time.Second))
 			if IsClose(err) {
 				return
 			}
