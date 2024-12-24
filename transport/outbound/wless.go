@@ -82,6 +82,7 @@ type ControlMessage struct {
 
 const (
 	CommandLink = 0x01
+	CommandPing = 0x02
 )
 
 type PassiveResponder struct {

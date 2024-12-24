@@ -176,25 +176,14 @@ func (s *Server) manageConnect(name string, r *http.Request, w http.ResponseWrit
 	s.manageConn.Store(name, conn)
 	defer s.manageConn.Delete(name)
 
-	conn.SetPingHandler(func(message string) error {
-		err := conn.WriteControl(websocket.PongMessage, []byte(message), time.Now().Add(time.Second))
-		if err == websocket.ErrCloseSent {
-			return nil
-		} else if e, ok := err.(net.Error); ok && e.Temporary() {
-			return nil
-		} else if err == nil {
-			return nil
-		}
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
 
-		if wss.IsClose(err) {
-			log.Printf("closing ..... : %v", conn.Close())
-			return err
-		}
-		log.Printf("pong error: %v", err)
-		return err
-	})
-	for {
-		_, _, err := conn.ReadMessage()
+	for range ticker.C {
+		err := conn.WriteJSON(ControlMessage{
+			Command: CommandPing,
+			Data:    map[string]interface{}{},
+		})
 		if wss.IsClose(err) {
 			log.Printf("closing ..... : %v", conn.Close())
 			return
@@ -266,4 +255,5 @@ type ControlMessage struct {
 
 const (
 	CommandLink = 0x01
+	CommandPing = 0x02
 )
