@@ -100,20 +100,5 @@ func RawWebSocketConnect(ctx context.Context, server string, param *ConnectParam
 		return nil, fmt.Errorf("statusCode != 101:\n%s", buf.String())
 	}
 
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			err = conn.WriteControl(websocket.PingMessage, []byte("hello world"), time.Now().Add(time.Second))
-			if IsClose(err) {
-				return
-			}
-			if err != nil {
-				log.Printf("Ping: %v", err)
-			}
-		}
-	}()
-
 	return conn, err
 }
