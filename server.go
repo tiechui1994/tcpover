@@ -32,19 +32,29 @@ type Server struct {
 	groupMux  sync.RWMutex
 	groupConn map[string]*PairGroup // code <=> []conn
 
+	defaultHeader http.Header
 	upgrade *websocket.Upgrader
 	conn    int32 // number of active connections
 }
 
 func NewServer() *Server {
 	return &Server{
-		upgrade:   &websocket.Upgrader{},
+		defaultHeader: map[string][]string{
+			"X-Version":{Version},
+		},
+		upgrade:   &websocket.Upgrader{
+			Error: func(w http.ResponseWriter, r *http.Request, status int, reason error) {
+				w.Header().Set("Sec-Websocket-Version", "13")
+				w.Header().Set("X-Version", Version)
+				http.Error(w, http.StatusText(status), status)
+			},
+		},
 		groupConn: map[string]*PairGroup{},
 	}
 }
 
 func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (remote net.Conn, addr string, err error) {
-	socket, err := s.upgrade.Upgrade(w, r, nil)
+	socket, err := s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
 		log.Printf("upgrade error: %v", err)
 		return nil, "", fmt.Errorf("upgrade error: %v", err)
@@ -72,7 +82,7 @@ func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (
 }
 
 func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Request, w http.ResponseWriter) {
-	socket, err := s.upgrade.Upgrade(w, r, nil)
+	socket, err := s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
 		log.Printf("upgrade error: %v", err)
 		http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusInternalServerError)
@@ -166,7 +176,7 @@ func (s *Server) directConnectMux(r *http.Request, w http.ResponseWriter) {
 }
 
 func (s *Server) manageConnect(name string, r *http.Request, w http.ResponseWriter) {
-	conn, err := s.upgrade.Upgrade(w, r, nil)
+	conn, err := s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
 		log.Printf("upgrade error: %v", err)
 		http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusBadRequest)

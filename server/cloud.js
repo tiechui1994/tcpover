@@ -408,7 +408,7 @@ export default {
             console.log("request url:", u)
             return await proxy(request, u)
         } else if (path.startsWith("/glitch")) {
-            const u = "https://tcpover.glitch.me" + path.substring("/glitch".length)
+            const u = "https://tcpdump.glitch.me" + path.substring("/glitch".length)
             console.log("request url:", u)
             return await proxy(request, u)
         } else if (path.startsWith("/vercel")) {
