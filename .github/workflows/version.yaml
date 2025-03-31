@@ -1,0 +1,48 @@
+name: version
+
+on:
+  push:
+    branches:
+      - 'master'
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0 # Checkout the whole branch
+
+      - name: Modify version.go
+        run: |
+          # install tools
+          sudo apt-get update && sudo apt-get install -y jq curl
+
+          # read version.go
+          commit=$(git log --max-count=1 --format='%H')
+          version=$(curl https://proxy.golang.org/github.com/tiechui1994/tcpover/@v/${commit}.info|jq .Version)
+          if [ $? -ne 0 ]; then
+            echo "get version failed"
+            exit 1
+          fi
+
+          cp version.go new_version.go
+          replace="const Version = $version"
+          regex='const Version = ".*"'
+          sed "s/$regex/$replace/" -i new_version.go
+
+          # update
+          if [ "$(cat version.go)" != "$(cat new_version.go)" ]; then
+            mv new_version.go version.go
+            echo "Version file updated."
+          else
+            rm -rf new_version.go
+            echo "Version number not found or not updated."
+          fi
+
+      - name: Commit & Push changes
+        uses: actions-js/push@master
+        with:
+          github_token: ${{ secrets.GIT_TOKEN }}
+          branch: 'master'
+          author_email: 2904951429@qq.com
