@@ -407,8 +407,8 @@ export default {
             const u = "https://tcpover.koyeb.app" + path
             console.log("request url:", u)
             return await proxy(request, u)
-        } else if (path.startsWith("/proxy")) {
-            const u = "https://tcpover.glitch.me" + path.substring("/proxy".length)
+        } else if (path.startsWith("/glitch")) {
+            const u = "https://tcpover.glitch.me" + path.substring("/glitch".length)
             console.log("request url:", u)
             return await proxy(request, u)
         } else if (path.startsWith("/vercel")) {
@@ -417,10 +417,6 @@ export default {
             return await proxy(request, u)
         } else if (path.startsWith("/lade")) {
             const u = "https://web-tiechui1994.ladeapp.com" + path.substring("/lade".length)
-            console.log("request url:", u)
-            return await proxy(request, u)
-        } else if (path.startsWith("/streams")) {
-            const u = "https://streams.gigalixirapp.com" + path.substring("/streams".length)
             console.log("request url:", u)
             return await proxy(request, u)
         } else if (path.startsWith("/tcpdump")) {
