@@ -1,8 +1,8 @@
 FROM golang:1.23 AS builder
 WORKDIR /app
 COPY . .
-RUN go mod tidy && go build -o ./tcpover ./cmd/tcpover/main.go
-RUN go install github.com/anacrolix/torrent/cmd/torrent@latest && mv /go/bin/torrent /app
+RUN go mod tidy && CGO_ENABLED=0 go build -o ./tcpover ./cmd/tcpover/main.go
+RUN CGO_ENABLED=0 go install github.com/anacrolix/torrent/cmd/torrent@latest && mv /go/bin/torrent /app
 
 
 FROM ubuntu:latest

@@ -1,7 +1,7 @@
 FROM golang:1.22 AS builder
 WORKDIR /app
 COPY . .
-RUN go mod tidy && go build -o ./tcpover ./cmd/tcpover/main.go
+RUN go mod tidy && CGO_ENABLED=0 go build -o ./tcpover ./cmd/tcpover/main.go
 
 FROM alpine:latest
 WORKDIR /app
