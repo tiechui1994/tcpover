@@ -424,6 +424,11 @@ export default {
             const u = "https://tcpdump.gigalixirapp.com" + path.substring("/tcpdump".length)
             console.log("request url:", u)
             return await proxy(request, u)
+        } else if (request.headers.get('x-real-host')) {
+            const host = request.headers.get('x-real-host').trim()
+            const u = "https://" + host + path
+            console.log("request url:", u)
+            return await proxy(request, u)
         } else if (path.startsWith("/https://") || path.startsWith("/http://")) {
             const u = path.substring(1)
             console.log("request url:", u)
