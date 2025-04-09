@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -33,16 +34,16 @@ type Server struct {
 	groupConn map[string]*PairGroup // code <=> []conn
 
 	defaultHeader http.Header
-	upgrade *websocket.Upgrader
-	conn    int32 // number of active connections
+	upgrade       *websocket.Upgrader
+	conn          int32 // number of active connections
 }
 
 func NewServer() *Server {
 	return &Server{
 		defaultHeader: map[string][]string{
-			"X-Version":{Version},
+			"X-Version": {Version},
 		},
-		upgrade:   &websocket.Upgrader{
+		upgrade: &websocket.Upgrader{
 			Error: func(w http.ResponseWriter, r *http.Request, status int, reason error) {
 				w.Header().Set("Sec-Websocket-Version", "13")
 				w.Header().Set("X-Version", Version)
@@ -203,6 +204,11 @@ func (s *Server) manageConnect(name string, r *http.Request, w http.ResponseWrit
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Upgrade") != "websocket" {
+		if r.URL.Path == "/healthz" {
+			s.Health(w, r)
+			return
+		}
+
 		var u *url.URL
 		if regexp.MustCompile(`^/https?://`).MatchString(r.RequestURI) {
 			u, _ = url.Parse(r.RequestURI[1:])
@@ -245,6 +251,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.manageConnect(name, r, w)
 		return
 	}
+}
+
+func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{
+		"message":     "User service is healthy",
+		"environment": "%v",
+		"timestamp":   "%v",
+	}`, os.Getenv("ENV"), time.Now())
 }
 
 func (s *Server) ProxyHandler(target *url.URL, w http.ResponseWriter, r *http.Request) {
