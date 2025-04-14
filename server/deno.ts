@@ -143,6 +143,54 @@ function parse(headers: any, buffer: any) {
     return {hostname, port}
 }
 
+app.get("/api/ws", async (c) => {
+    const upgrade = c.req.headers.get("upgrade") || "";
+    if (upgrade.toLowerCase() != "websocket") {
+        return new Response("request isn't trying to upgrade to websocket.");
+    }
+
+    const {response, socket} = Deno.upgradeWebSocket(c.req.raw)
+    socket.onopen = () => {
+        const url = new URL(c.req.raw.url)
+        if (c.req.headers.has("proto")) {
+            url.searchParams.append("proto", c.req.raw.headers.get("proto"))
+        }
+        url.host = c.req.headers.get("x-real-host") || "echo.websocket.org"
+        url.protocol = "wss"
+
+        console.log("real wss", url.toString())
+        const remote = new WebSocket(url.toString())
+        remote.binaryType = "arraybuffer"
+
+        remote.onopen = () => {
+            socket.onmessage = (event) => {
+                remote.send(event.data)
+            }
+            socket.onclose = (ev) => {
+                remote.close()
+            }
+            socket.onerror = () => {
+                remote.close()
+                socket.close()
+            }
+        }
+
+        remote.onmessage = (event) => {
+            socket.send(event.data)
+        }
+        remote.onclose = () => {
+            socket.close()
+        }
+        remote.onerror = () => {
+            remote.close()
+            socket.close()
+        }
+    }
+
+    return response
+
+})
+
 app.get("/~/ws", async (c) => {
     const upgrade = c.req.headers.get("upgrade") || "";
     if (upgrade.toLowerCase() != "websocket") {
