@@ -71,6 +71,9 @@ func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (
 	}()
 
 	var proto = r.Header.Get("proto")
+	if proto == "" {
+		proto = r.URL.Query().Get("proto")
+	}
 	log.Printf("proto %v", proto)
 	switch proto {
 	case ctx.Vless:
@@ -102,6 +105,8 @@ func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Reques
 
 		var proto = ctx.Wless
 		if r.Header.Get("proto") == ctx.Vless {
+			proto = ctx.Vless
+		} else if r.URL.Query().Get("proto") == ctx.Vless {
 			proto = ctx.Vless
 		}
 
