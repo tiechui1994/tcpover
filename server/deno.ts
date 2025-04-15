@@ -44,7 +44,7 @@ class WebSocketStream {
     constructor(socket: EmendWebsocket) {
         this.socket = socket;
         this.readable = new ReadableStream({
-            async start(controller) {
+            start(controller) {
                 socket.socket.onmessage = (event) => {
                     controller.enqueue(new Uint8Array(event.data));
                 };
@@ -149,46 +149,46 @@ app.get("/api/ws", async (c) => {
         return new Response("request isn't trying to upgrade to websocket.");
     }
 
+    const url = new URL(c.req.raw.url)
+    if (c.req.headers.has("proto")) {
+        url.searchParams.append("proto", c.req.raw.headers.get("proto"))
+    }
+    if (c.req.headers.has('x-real-host')) {
+        url.host = c.req.headers.get("x-real-host")
+    } else {
+        url.host = "echo.websocket.org"
+        url.pathname = "/"
+    }
+    url.protocol = "wss"
+    console.log("real wss", url.toString())
+
     const {response, socket} = Deno.upgradeWebSocket(c.req.raw)
     socket.onopen = () => {
-        const url = new URL(c.req.raw.url)
-        if (c.req.headers.has("proto")) {
-            url.searchParams.append("proto", c.req.raw.headers.get("proto"))
-        }
-        url.host = c.req.headers.get("x-real-host") || "echo.websocket.org"
-        url.protocol = "wss"
+        const local = new WebSocketStream(new EmendWebsocket(socket, `local`))
+        const remoteSocket = new WebSocket(url.toString())
+        remoteSocket.binaryType = "arraybuffer"
+        const remote = new WebSocketStream(new EmendWebsocket(remoteSocket, `remote`))
 
-        console.log("real wss", url.toString())
-        const remote = new WebSocket(url.toString())
-        remote.binaryType = "arraybuffer"
+        try {
+            // important: after remote websocket on ready, can send data
+            remoteSocket.onopen = () => {
+                local.readable.pipeTo(remote.writable).catch((e) => {
+                    console.error("local readable exception:", e.message)
+                })
+            }
 
-        remote.onopen = () => {
-            socket.onmessage = (event) => {
-                remote.send(event.data)
-            }
-            socket.onclose = (ev) => {
-                remote.close()
-            }
-            socket.onerror = () => {
-                remote.close()
-                socket.close()
-            }
-        }
-
-        remote.onmessage = (event) => {
-            socket.send(event.data)
-        }
-        remote.onclose = () => {
-            socket.close()
-        }
-        remote.onerror = () => {
-            remote.close()
-            socket.close()
+            // in here, local websocket on ready, can send data
+            remote.readable.pipeTo(local.writable).catch((e) => {
+                console.error("remote readable exception:", e.message)
+            })
+        } catch (e) {
+            local.socket.close()
+            remote.socket.close()
+            console.error("socket catch:", e.message)
         }
     }
 
     return response
-
 })
 
 app.get("/~/ws", async (c) => {
