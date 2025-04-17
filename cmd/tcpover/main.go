@@ -27,9 +27,11 @@ func main() {
 
 	listenAddr := flag.String("l", ":1080", "Listen address [SC]")
 	serverEndpoint := flag.String("e", "", "Server endpoint. [C]")
-	name := flag.String("name", "", "name [SC]")
-	remoteName := flag.String("remoteName", "", "remoteName. [C]")
-	remoteAddr := flag.String("addr", "", "remoteAddr. [C]")
+	name := flag.String("name", "", "proxy name [SC]")
+	remoteName := flag.String("remoteName", "", "link remote proxy name. [C]")
+	remoteAddr := flag.String("addr", "", "want to connect remote addr. [C]")
+
+	vless := flag.Bool("vless", false, "support vless protocol. default wless protocol")
 
 	flag.Parse()
 
@@ -42,11 +44,21 @@ func main() {
 	}
 
 	if *runAsConnector && (*serverEndpoint == "" || *remoteAddr == "") {
-		log.Fatalln("agent must set server endpoint and addr")
+		if *serverEndpoint == "" {
+			log.Fatalln("connector must set server endpoint")
+		}
+		if *remoteAddr == "" {
+			log.Fatalln("connector must set link remote addr")
+		}
 	}
 
 	if *runAsAgent && (*serverEndpoint == "" || *name == "") {
-		log.Fatalln("agent must set server endpoint and name")
+		if *serverEndpoint == "" {
+			log.Fatalln("agent must set server endpoint")
+		}
+		if *name == "" {
+			log.Fatalln("agent must set link proxy name, others link it")
+		}
 	}
 
 	if *runAsServer {
@@ -60,7 +72,11 @@ func main() {
 
 	if *runAsConnector {
 		c := tcpover.NewClient(*serverEndpoint, nil)
-		if err := c.Std(*remoteName, *remoteAddr); err != nil {
+		_type := ctx.Wless
+		if *vless {
+			_type = ctx.Vless
+		}
+		if err := c.Std(*remoteName, *remoteAddr, _type); err != nil {
 			log.Fatalln(err)
 		}
 		return
@@ -68,11 +84,14 @@ func main() {
 
 	if *runAsAgent {
 		c := tcpover.NewClient(*serverEndpoint, nil)
+		_type := ctx.Wless
+		if *vless {
+			_type = ctx.Vless
+		}
 		var proxies []map[string]interface{}
-
 		proxies = append(proxies, map[string]interface{}{
-			"type":   ctx.Wless,
-			"name":   "proxy1",
+			"type":   _type,
+			"name":   "proxying",
 			"local":  *name,
 			"remote": *remoteName,
 			"direct": outbound.DirectSendRecv,

@@ -39,13 +39,13 @@ func NewClient(server string, proxy map[string][]string) *Client {
 	}
 }
 
-func (c *Client) Std(remoteName, remoteAddr string) error {
+func (c *Client) Std(remoteName, remoteAddr string, _type ctx.ProxyType) error {
 	var std io.ReadWriteCloser = NewStdReadWriteCloser()
 	if Debug {
 		std = NewEchoReadWriteCloser()
 	}
 
-	if err := c.stdConnectServer(std, remoteName, remoteAddr); err != nil {
+	if err := c.stdConnectServer(std, remoteName, remoteAddr, _type); err != nil {
 		log.Printf("Std::ConnectServer %v", err)
 		return err
 	}
@@ -75,13 +75,12 @@ func (c *Client) Serve(config config.RawConfig) error {
 	return nil
 }
 
-func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAddr string) error {
+func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAddr string, proto ctx.ProxyType) error {
 	var mode = wss.ModeForward
 	if remoteName == "" || remoteName == remoteAddr {
 		mode = wss.ModeDirect
 	}
 
-	var proto = ctx.Wless
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Name: remoteName,
 		Role: wss.RoleConnector,
