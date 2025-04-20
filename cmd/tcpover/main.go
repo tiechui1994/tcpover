@@ -88,13 +88,23 @@ func main() {
 		if *vless {
 			_type = ctx.Vless
 		}
-		mode := wss.ModeDirect
-		if *remoteName != "" && *mux {
-			mode = wss.ModeForwardMux
-		} else if *remoteName != "" && !*mux {
+
+		var mode wss.Mode
+		if *name == "" && *remoteName == "" {
+			mode = wss.ModeDirect
+		} else if *name != "" && *remoteName == "" {
+			// 要注册本地名称, 用户自己决定
 			mode = wss.ModeForward
-		} else if *remoteName == "" && *mux {
-			mode = wss.ModeDirectMux
+		} else if *name == "" && *remoteName != "" {
+			// 要连接到远端
+			mode = wss.ModeForward
+		} else if *name != "" && *remoteName != "" {
+			// 自己要注册, 要连接到远端
+			mode = wss.ModeForward
+		}
+
+		if *mux {
+			mode = mode.Mux()
 		}
 
 		var proxying =  map[string]interface{}{

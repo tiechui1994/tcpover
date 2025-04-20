@@ -44,6 +44,18 @@ func (m Mode) IsMux() bool {
 	return m == ModeDirectMux || m == ModeForwardMux
 }
 
+func (m *Mode) Mux() Mode {
+	if m.IsMux() {
+		return *m
+	}
+
+	if *m == ModeDirect {
+		return ModeDirectMux
+	}
+
+	return ModeForwardMux
+}
+
 type ConnectParam struct {
 	Name   string
 	Role   string
