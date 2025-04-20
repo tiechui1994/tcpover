@@ -88,17 +88,34 @@ func main() {
 		if *vless {
 			_type = ctx.Vless
 		}
-		var proxies []map[string]interface{}
-		proxies = append(proxies, map[string]interface{}{
+		mode := wss.ModeDirect
+		if *remoteName != "" && *mux {
+			mode = wss.ModeForwardMux
+		} else if *remoteName != "" && !*mux {
+			mode = wss.ModeForward
+		} else if *remoteName == "" && *mux {
+			mode = wss.ModeDirectMux
+		}
+
+		var proxying =  map[string]interface{}{
 			"type":   _type,
 			"name":   "proxying",
 			"local":  *name,
 			"remote": *remoteName,
 			"direct": outbound.DirectSendRecv,
 			"server": *serverEndpoint,
-			"mode":   wss.ModeForwardMux,
+			"mode":   mode,
 			"mux":    *mux,
-		})
+		}
+		if _type == ctx.Vless {
+			proxying["uuid"] = ""
+		}
+
+		if *mux {
+			proxying["mode"] = wss.ModeDirectMux
+		}
+		var proxies []map[string]interface{}
+		proxies = append(proxies, proxying)
 
 		err := c.Serve(config.RawConfig{
 			Listen:  *listenAddr,
