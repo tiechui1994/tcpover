@@ -2,8 +2,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/tiechui1994/tcpover"
 	"github.com/tiechui1994/tcpover/config"
@@ -17,6 +20,25 @@ var debug bool
 func init() {
 	log.SetFlags(log.Lshortfile | log.Ltime)
 }
+
+type header struct {
+	data map[string]string
+}
+
+func (h *header) String() string {
+	return fmt.Sprintf("%+v", h.data)
+}
+
+func (h *header) Set(s string) error {
+	kv := strings.Split(strings.TrimSpace(s), ":")
+	if len(kv) == 2 {
+		if h.data == nil {h.data = make(map[string]string)}
+		h.data[strings.TrimSpace(kv[0])]  = strings.TrimSpace(kv[1])
+	}
+	return nil
+}
+
+func (h *header) Get() interface{} { return h.data }
 
 func main() {
 	runAsConnector := flag.Bool("c", false, "as connector")
@@ -32,6 +54,9 @@ func main() {
 	remoteAddr := flag.String("addr", "", "want to connect remote addr. [C]")
 
 	vless := flag.Bool("vless", false, "support vless protocol. default wless protocol")
+
+	h := new(header)
+	flag.Var(h, "H", "protocol http header. [C]")
 
 	flag.Parse()
 
@@ -52,12 +77,9 @@ func main() {
 		}
 	}
 
-	if *runAsAgent && (*serverEndpoint == "" || *name == "") {
+	if *runAsAgent && (*serverEndpoint == "") {
 		if *serverEndpoint == "" {
 			log.Fatalln("agent must set server endpoint")
-		}
-		if *name == "" {
-			log.Fatalln("agent must set link proxy name, others link it")
 		}
 	}
 
@@ -76,7 +98,7 @@ func main() {
 		if *vless {
 			_type = ctx.Vless
 		}
-		if err := c.Std(*remoteName, *remoteAddr, _type); err != nil {
+		if err := c.Std(*remoteName, *remoteAddr, _type, h.data); err != nil {
 			log.Fatalln(err)
 		}
 		return
@@ -93,12 +115,15 @@ func main() {
 		if *name == "" && *remoteName == "" {
 			mode = wss.ModeDirect
 		} else if *name != "" && *remoteName == "" {
-			// 要注册本地名称, 用户自己决定
+			log.Printf("register agent name [%v] ...", *name)
+			// 要注册本地名称.
 			mode = wss.ModeForward
 		} else if *name == "" && *remoteName != "" {
+			log.Printf("connect to remote name [%v] ...", *remoteName)
 			// 要连接到远端
 			mode = wss.ModeForward
 		} else if *name != "" && *remoteName != "" {
+			log.Printf("register agent name [%v and connect remote name [%v] ...", *name, *remoteName)
 			// 自己要注册, 要连接到远端
 			mode = wss.ModeForward
 		}
@@ -107,7 +132,7 @@ func main() {
 			mode = mode.Mux()
 		}
 
-		var proxying =  map[string]interface{}{
+		var proxying = map[string]interface{}{
 			"type":   _type,
 			"name":   "proxying",
 			"local":  *name,
@@ -116,9 +141,10 @@ func main() {
 			"server": *serverEndpoint,
 			"mode":   mode,
 			"mux":    *mux,
+			"header": h.data,
 		}
 		if _type == ctx.Vless {
-			proxying["uuid"] = ""
+			proxying["uuid"] = time.Now().String()
 		}
 
 		if *mux {

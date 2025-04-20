@@ -114,3 +114,14 @@ func RawWebSocketConnect(ctx context.Context, server string, param *ConnectParam
 
 	return conn, err
 }
+
+func Header(proto string, header map[string]string) http.Header  {
+	h := make(http.Header)
+	for k, v := range header {
+		h.Set(k, v)
+	}
+	if proto != "" {
+		h.Set("proto", proto)
+	}
+	return h
+}

@@ -34,7 +34,7 @@ func NewVless(option VlessOption) (ctx.Proxy, error) {
 
 	if option.Direct == DirectRecvOnly || option.Direct == DirectSendRecv {
 		responder := PassiveResponder{server: option.Server}
-		responder.manage(option.Local)
+		responder.manage(option.Local, option.Header)
 	}
 
 	return &Vless{
@@ -85,7 +85,7 @@ func newWlessDirectConnDispatcher(option WlessOption) (*directConnDispatcher, er
 	log.Printf("mux: %v, %v", option.Mux, option.Mode)
 
 	muxClient := mux.NewClient(func() (net.Conn, error) {
-		conn, err := connect(context.Background(), option.Mode, option.Server, option.Remote, ctx.Wless)
+		conn, err := connect(context.Background(), option.Mode, option.Server, option.Remote, ctx.Wless, option.Header)
 		if err != nil {
 			return nil, err
 		}
@@ -100,7 +100,7 @@ func newWlessDirectConnDispatcher(option WlessOption) (*directConnDispatcher, er
 				return muxClient.DialContext(cx, metadata)
 			}
 
-			conn, err := connect(cx, option.Mode, option.Server, option.Remote, ctx.Wless)
+			conn, err := connect(cx, option.Mode, option.Server, option.Remote, ctx.Wless, option.Header)
 			if err != nil {
 				return nil, err
 			}
@@ -119,7 +119,7 @@ func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, er
 	}
 
 	muxClient := mux.NewClient(func() (net.Conn, error) {
-		conn, err := connect(context.Background(), option.Mode, option.Server, option.Remote, ctx.Vless)
+		conn, err := connect(context.Background(), option.Mode, option.Server, option.Remote, ctx.Vless, option.Header)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +139,7 @@ func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, er
 				return muxClient.DialContext(cx, metadata)
 			}
 
-			conn, err := connect(cx, option.Mode, option.Server, option.Remote, ctx.Vless)
+			conn, err := connect(cx, option.Mode, option.Server, option.Remote, ctx.Vless, option.Header)
 			if err != nil {
 				return nil, err
 			}
@@ -153,7 +153,7 @@ type directConnDispatcher struct {
 	createConn func(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error)
 }
 
-func connect(ctx context.Context, optionMode wss.Mode, optionServer, remoteName string, proxyType ctx.ProxyType) (net.Conn, error) {
+func connect(ctx context.Context, optionMode wss.Mode, optionServer, remoteName string, proxyType ctx.ProxyType, header map[string]string) (net.Conn, error) {
 	// name: 直接连接, name is empty
 	//       远程代理, name not empty
 	// mode: ModeDirect | ModeForward
@@ -161,9 +161,7 @@ func connect(ctx context.Context, optionMode wss.Mode, optionServer, remoteName 
 		Name: remoteName,
 		Mode: optionMode,
 		Role: wss.RoleAgent,
-		Header: map[string][]string{
-			"proto": {proxyType},
-		},
+		Header: wss.Header(proxyType, header),
 	})
 	if err != nil {
 		return nil, err

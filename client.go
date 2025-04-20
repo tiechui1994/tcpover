@@ -39,13 +39,13 @@ func NewClient(server string, proxy map[string][]string) *Client {
 	}
 }
 
-func (c *Client) Std(remoteName, remoteAddr string, _type ctx.ProxyType) error {
+func (c *Client) Std(remoteName, remoteAddr string, _type ctx.ProxyType, header map[string]string) error {
 	var std io.ReadWriteCloser = NewStdReadWriteCloser()
 	if Debug {
 		std = NewEchoReadWriteCloser()
 	}
 
-	if err := c.stdConnectServer(std, remoteName, remoteAddr, _type); err != nil {
+	if err := c.stdConnectServer(std, remoteName, remoteAddr, _type, header); err != nil {
 		log.Printf("Std::ConnectServer %v", err)
 		return err
 	}
@@ -75,7 +75,7 @@ func (c *Client) Serve(config config.RawConfig) error {
 	return nil
 }
 
-func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAddr string, proto ctx.ProxyType) error {
+func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAddr string, proto ctx.ProxyType, header map[string]string) error {
 	var mode = wss.ModeForward
 	if remoteName == "" || remoteName == remoteAddr {
 		mode = wss.ModeDirect
@@ -85,9 +85,7 @@ func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAd
 		Name: remoteName,
 		Role: wss.RoleConnector,
 		Mode: mode,
-		Header: map[string][]string{
-			"proto": {proto},
-		},
+		Header: wss.Header(proto, header),
 	})
 	if err != nil {
 		return err

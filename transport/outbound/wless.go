@@ -33,6 +33,7 @@ type WlessOption struct {
 	Server string   `proxy:"server"`
 	Direct string   `proxy:"direct"`
 	Mux    bool     `proxy:"mux"`
+	Header map[string]string `proxy:"header"`
 }
 
 func NewWless(option WlessOption) (ctx.Proxy, error) {
@@ -50,7 +51,7 @@ func NewWless(option WlessOption) (ctx.Proxy, error) {
 
 	if option.Direct == DirectRecvOnly || option.Direct == DirectSendRecv {
 		responder := &PassiveResponder{server: option.Server}
-		responder.manage(option.Local)
+		responder.manage(option.Local, option.Header)
 	}
 
 	return &Wless{
@@ -90,17 +91,17 @@ type PassiveResponder struct {
 	server string
 }
 
-func (c *PassiveResponder) manage(name string) {
+func (c *PassiveResponder) manage(name string, header map[string]string) {
 	times := 1
 try:
 	time.Sleep(time.Second * time.Duration(times))
 	if times >= 64 {
 		times = 1
 	}
-
 	conn, err := wss.RawWebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Name: name,
 		Role: wss.RoleManager,
+		Header: wss.Header("", header),
 	})
 	if err != nil {
 		log.Printf("Manage::DialContext: %v", err)
@@ -111,7 +112,7 @@ try:
 	var onceClose sync.Once
 	closeFunc := func() {
 		log.Printf("Manage Socket Close: %v", conn.Close())
-		c.manage(name)
+		c.manage(name, header)
 		log.Printf("Reconnect to server success")
 	}
 
@@ -142,9 +143,9 @@ try:
 					network := cmd.Data["Network"].(string)
 					proto := cmd.Data["Proto"].(string)
 					if v := cmd.Data["Mux"]; v.(bool) {
-						err = c.connectLocalMux(code, network, proto)
+						err = c.connectLocalMux(code, network, proto, header)
 					} else {
-						err = c.connectLocal(code, network, proto)
+						err = c.connectLocal(code, network, proto, header)
 					}
 					if err != nil {
 						log.Println("ConnectLocal:", err)
@@ -155,14 +156,12 @@ try:
 	}()
 }
 
-func (c *PassiveResponder) connectLocal(code, network, proto string) error {
+func (c *PassiveResponder) connectLocal(code, network, proto string, header map[string]string) error {
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Code: code,
 		Role: wss.RoleAgent,
 		Mode: wss.ModeForward,
-		Header: map[string][]string{
-			"proto": {proto},
-		},
+		Header: wss.Header(proto, header),
 	})
 	if err != nil {
 		return err
@@ -193,14 +192,12 @@ func (c *PassiveResponder) connectLocal(code, network, proto string) error {
 	return nil
 }
 
-func (c *PassiveResponder) connectLocalMux(code, network, proto string) error {
+func (c *PassiveResponder) connectLocalMux(code, network, proto string, header map[string]string) error {
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Code: code,
 		Role: wss.RoleAgent,
 		Mode: wss.ModeForwardMux,
-		Header: map[string][]string{
-			"proto": {proto},
-		},
+		Header: wss.Header(proto, header),
 	})
 	if err != nil {
 		return err
