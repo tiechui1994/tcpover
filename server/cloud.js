@@ -365,21 +365,24 @@ const protoWless = "Wless"
 const protoVless = "Vless"
 
 function parseProtoAddress(proto, buffer) {
-    console.info("data, ", proto, buffer)
-    let port, hostname = ""
+    console.info("data, ", proto, buffer.byteLength)
+    let port, hostname, remain
     switch (proto) {
         case protoVless:
             port = buffer[20] | buffer[19] << 8
             switch (buffer[21]) {
                 case 1:
-                    hostname = buffer.slice(22, 23 + 4).join(".")
+                    hostname = buffer.slice(22, 22 + 4).join(".")
+                    remain = buffer.slice(22+4)
                     break
                 case 3:
-                    hostname = buffer.slice(22, 23 + 16).join(":")
+                    hostname = buffer.slice(22, 22 + 16).join(":")
+                    remain = buffer.slice(22+16)
                     break
                 case 2:
                     const length = buffer[22]
                     hostname = new TextDecoder().decode(buffer.slice(23, 23 + length))
+                    remain = buffer.slice(23+length)
                     break
             }
             break
@@ -394,10 +397,11 @@ function parseProtoAddress(proto, buffer) {
                 hostname = tokens[0].trim()
                 port = 443
             }
+            remain = buffer.slice(1+len)
             break
     }
 
-    return {hostname, port}
+    return {hostname, port, remain}
 }
 
 
@@ -433,15 +437,21 @@ async function ws(request) {
 
         const proto = request.headers.get("proto")
         if (modeDirect === mode) {
-            webSocket.onmessage = (event) => {
-                const {hostname, port} = parseProtoAddress(proto, new Uint8Array(event.data))
+            webSocket.onmessage = async (event) => {
+                console.info("proto", proto)
+                const {hostname, port, remain} = parseProtoAddress(proto, new Uint8Array(event.data))
                 if (proto === protoVless) {
                     webSocket.send(new Uint8Array(2))
                 }
 
                 const remote = new WebSocketStream(new EmendWebsocket(webSocket, `${rule}_${proto}}`))
-                console.info(`real addr: ${hostname}:${port}`)
+                console.info(`real addr: ${hostname}:${port}, ${remain.byteLength}`)
                 const local = connect(`${hostname}:${port}`, {secureTransport: "off"})
+                if (remain && remain.byteLength > 0) {
+                    const writer = local.writable.getWriter()
+                    await writer.write(remain)
+                    writer.releaseLock();
+                }
                 remote.readable.pipeTo(local.writable).catch((e) => {
                     console.error("socket exception", e.message)
                     safeCloseWebSocket(webSocket)

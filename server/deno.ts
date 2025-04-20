@@ -109,20 +109,23 @@ function proxy(request: any, endpoint: string) {
 }
 
 function parseProtoAddress(proto: string, buffer: any) {
-    let port, hostname = ""
+    let port, hostname, remain
     switch (proto) {
         case protoVless:
             port = buffer[20] | buffer[19] << 8
             switch (buffer[21]) {
                 case 1:
-                    hostname = buffer.slice(22, 23 + 4).join(".")
+                    hostname = buffer.slice(22, 22 + 4).join(".")
+                    remain = buffer.slice(22+4)
                     break
                 case 3:
-                    hostname = buffer.slice(22, 23 + 16).join(":")
+                    hostname = buffer.slice(22, 22 + 16).join(":")
+                    remain = buffer.slice(22+16)
                     break
                 case 2:
                     const length = buffer[22]
                     hostname = new TextDecoder().decode(buffer.slice(23, 23 + length))
+                    remain = buffer.slice(23+length)
                     break
             }
             break
@@ -137,10 +140,11 @@ function parseProtoAddress(proto: string, buffer: any) {
                 hostname = tokens[0].trim()
                 port = 443
             }
+            remain = buffer.slice(1+len)
             break
     }
 
-    return {hostname, port}
+    return {hostname, port, remain}
 }
 
 app.get("/api/ws", async (c) => {
@@ -211,7 +215,7 @@ app.get("/~/ws", async (c) => {
             const proto = headers.get("proto")
 
             socket.onmessage = (event) => {
-                const {hostname, port} = parseProtoAddress(proto, new Uint8Array(event.data))
+                const {hostname, port, remain} = parseProtoAddress(proto, new Uint8Array(event.data))
                 if (proto === protoVless) {
                     socket.send(new Uint8Array(2))
                 }
@@ -219,6 +223,7 @@ app.get("/~/ws", async (c) => {
                     socket.close(1006, "not support")
                     return
                 }
+
                 console.info(hostname, port)
                 const local = new WebSocketStream(new EmendWebsocket(socket, `${rule}`))
                 let conn = Deno.connect({
@@ -226,6 +231,20 @@ app.get("/~/ws", async (c) => {
                     hostname: hostname,
                 })
                 conn.then((remote) => {
+                    if (remain && remain.byteLength > 0) {
+                        const writer = conn.writable.getWriter()
+                        writer.write(remain).then(() => {
+                            writer.releaseLock()
+                            local.readable.pipeTo(remote.writable).catch((e) => {
+                                console.log("local readable exception:", e.message)
+                            })
+                            remote.readable.pipeTo(local.writable).catch((e) => {
+                                console.log("remote readable exception:", e.message)
+                            })
+                        })
+                        return
+                    }
+
                     local.readable.pipeTo(remote.writable).catch((e) => {
                         console.log("local readable exception:", e.message)
                     })
