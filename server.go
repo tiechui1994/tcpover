@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -209,7 +208,7 @@ func (s *Server) manageConnect(name string, r *http.Request, w http.ResponseWrit
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Upgrade") != "websocket" {
-		if r.URL.Path == "/healthz" {
+		if r.URL.Path == "/health" {
 			s.Health(w, r)
 			return
 		}
@@ -259,12 +258,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{
-		"message":     "User service is healthy",
-		"environment": "%v",
-		"timestamp":   "%v",
-	}`, os.Getenv("ENV"), time.Now())
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "OK")
 }
 
 func (s *Server) ProxyHandler(target *url.URL, w http.ResponseWriter, r *http.Request) {
