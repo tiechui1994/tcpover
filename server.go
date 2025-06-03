@@ -212,6 +212,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.Health(w, r)
 			return
 		}
+		if r.URL.Path == "/version" || r.URL.Path == "/v"{
+			s.Version(w, r)
+			return
+		}
 
 		var u *url.URL
 		if regexp.MustCompile(`^/https?://`).MatchString(r.RequestURI) {
@@ -259,7 +263,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+	fmt.Println(time.Now().Format("2006-01-02T15:04:05.999"), " health ....")
 	fmt.Fprint(w, "OK")
+}
+
+func (s *Server) Version(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, Version)
 }
 
 func (s *Server) ProxyHandler(target *url.URL, w http.ResponseWriter, r *http.Request) {
