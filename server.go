@@ -264,7 +264,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Println(time.Now().Format("2006-01-02T15:04:05.999"), " health ....")
-	fmt.Fprint(w, "OK")
+	fmt.Fprint(w, "200 OK")
 }
 
 func (s *Server) Version(w http.ResponseWriter, r *http.Request) {
