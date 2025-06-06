@@ -1,13 +1,19 @@
 package tcpover
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,6 +25,7 @@ import (
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
+	"github.com/tiechui1994/tool/util"
 )
 
 type PairGroup struct {
@@ -212,8 +219,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.Health(w, r)
 			return
 		}
-		if r.URL.Path == "/version" || r.URL.Path == "/v"{
+		if r.URL.Path == "/version" || r.URL.Path == "/v" {
 			s.Version(w, r)
+			return
+		}
+		if r.URL.Path == "/upgrade" {
+			s.Upgrade(w, r)
 			return
 		}
 
@@ -270,6 +281,54 @@ func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Version(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, Version)
+}
+
+func (s *Server) Upgrade(w http.ResponseWriter, r *http.Request) {
+	download := strings.TrimSpace(r.Header.Get("url"))
+	if !strings.HasPrefix(download, "http://") && !strings.HasPrefix(download, "https://") {
+		http.Error(w, "invalid download url", http.StatusBadRequest)
+		return
+	}
+
+	reader, err := util.File(download, "GET", util.WithRetry(2))
+	if err != nil {
+		http.Error(w, "download failure "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	clearStorage()
+
+	pwd, _ := os.Executable()
+	oldPath := filepath.Join(filepath.Dir(pwd), "stream.backup")
+	fd, err := os.OpenFile(oldPath, os.O_EXCL|os.O_CREATE|os.O_RDWR, 0755)
+	if err != nil {
+		http.Error(w, "create temp file failure "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	hash := sha1.New()
+	readerToHash := io.TeeReader(reader, hash)
+
+	_, err = io.Copy(fd, readerToHash)
+	if err != nil {
+		http.Error(w, "download copy failure "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = os.Rename(oldPath, pwd)
+	if err != nil {
+		http.Error(w, "rename failure "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	clearStorage()
+
+	_, _ = fmt.Fprint(w, hex.EncodeToString(hash.Sum(nil)))
+}
+
+func clearStorage() {
+	pwd, _ := os.Executable()
+	_ = os.RemoveAll(filepath.Join(filepath.Dir(pwd), ".git"))
 }
 
 func (s *Server) ProxyHandler(target *url.URL, w http.ResponseWriter, r *http.Request) {
