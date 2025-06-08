@@ -219,12 +219,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.Health(w, r)
 			return
 		}
-		if r.URL.Path == "/version" || r.URL.Path == "/v" {
-			s.Version(w, r)
-			return
-		}
 		if r.URL.Path == "/upgrade" {
 			s.Upgrade(w, r)
+			return
+		}
+		if r.URL.Path == "/" {
+			s.Version(w, r)
 			return
 		}
 
@@ -280,7 +280,7 @@ func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Version(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, Version)
+	fmt.Fprintf(w, `{"version":"%v", "now":"%v"}`, Version, time.Now().Format("2006-01-02T15:04:05.9999"))
 }
 
 func (s *Server) Upgrade(w http.ResponseWriter, r *http.Request) {
