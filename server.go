@@ -3,6 +3,7 @@ package tcpover
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -234,7 +235,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			u, _ = url.Parse("https://api.quinn.eu.org")
 		}
-		log.Printf("url: %v", u)
+		log.Printf("proxy url: %v", u)
 		s.ProxyHandler(u, w, r)
 		return
 	}
@@ -273,14 +274,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Health(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	fmt.Println(time.Now().Format("2006-01-02T15:04:05.999"), " health ....")
-	fmt.Fprint(w, "200 OK")
+	raw, _ := json.Marshal(map[string]interface{}{
+		"message":     "tcpover service is healthy",
+		"environment": os.Getenv("ENV"),
+		"timestamp":   time.Now(),
+	})
+	_, _ = w.Write(raw)
 }
 
 func (s *Server) Version(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"version":"%v", "now":"%v"}`, Version, time.Now().Format("2006-01-02T15:04:05.9999"))
+	raw, _ := json.Marshal(map[string]interface{}{
+		"version": Version,
+		"now":     time.Now().Format("2006-01-02T15:04:05.9999"),
+	})
+	_, _ = w.Write(raw)
 }
 
 func (s *Server) Upgrade(w http.ResponseWriter, r *http.Request) {
@@ -295,8 +302,6 @@ func (s *Server) Upgrade(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "download failure "+err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	clearStorage()
 
 	pwd, _ := os.Executable()
 	oldPath := filepath.Join(filepath.Dir(pwd), "stream.backup")
@@ -321,14 +326,7 @@ func (s *Server) Upgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clearStorage()
-
 	_, _ = fmt.Fprint(w, hex.EncodeToString(hash.Sum(nil)))
-}
-
-func clearStorage() {
-	pwd, _ := os.Executable()
-	_ = os.RemoveAll(filepath.Join(filepath.Dir(pwd), ".git"))
 }
 
 func (s *Server) ProxyHandler(target *url.URL, w http.ResponseWriter, r *http.Request) {

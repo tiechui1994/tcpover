@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tiechui1994/tcpover"
@@ -32,8 +36,10 @@ func (h *header) String() string {
 func (h *header) Set(s string) error {
 	kv := strings.Split(strings.TrimSpace(s), ":")
 	if len(kv) == 2 {
-		if h.data == nil {h.data = make(map[string]string)}
-		h.data[strings.TrimSpace(kv[0])]  = strings.TrimSpace(kv[1])
+		if h.data == nil {
+			h.data = make(map[string]string)
+		}
+		h.data[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
 	}
 	return nil
 }
@@ -84,10 +90,26 @@ func main() {
 	}
 
 	if *runAsServer {
-		log.Printf("server [%v] start ...", *listenAddr)
-		s := tcpover.NewServer()
-		if err := http.ListenAndServe(*listenAddr, s); err != nil {
-			log.Fatalln(err)
+		app := http.Server{
+			Handler: tcpover.NewServer(),
+			Addr:    *listenAddr,
+		}
+
+		go func() {
+			log.Printf("addr %s tcpover service is starting...", *listenAddr)
+			if err := app.ListenAndServe(); err != nil {
+				log.Printf("failed to start server: %v", err)
+			}
+		}()
+
+		sigtermC := make(chan os.Signal, 1)
+		signal.Notify(sigtermC, os.Interrupt, syscall.SIGTERM, syscall.SIGABRT)
+
+		<-sigtermC // block until SIGTERM is received
+		log.Printf("SIGTERM received: gracefully shutting down...")
+
+		if err := app.Shutdown(context.Background()); err != nil {
+			log.Printf("server shutdown error: %v", err)
 		}
 		return
 	}

@@ -1,20 +1,15 @@
-FROM golang:1.22 AS builder
+FROM golang:1.22-alpine AS builder
+RUN apk add build-base musl-dev
 WORKDIR /app
 COPY . .
-RUN go mod tidy && CGO_ENABLED=0 go build -o ./tcpover ./cmd/tcpover/main.go
+RUN go mod tidy && \
+    CGO_ENABLED=0 go build -ldflags="-w -s" -o /app/tcpover ./cmd/tcpover && \
+    file /app/tcpover
+
 
 FROM alpine:latest
 WORKDIR /app
 COPY --from=builder /app/tcpover .
-RUN adduser \
-  --disabled-password \
-  --gecos "" \
-  --home "/nonexistent" \
-  --shell "/sbin/nologin" \
-  --no-create-home \
-  --uid 10014 "choreo"
-# Use the above created unprivileged user
-USER 10014
-
+ENV PORT=8080
 EXPOSE 8080
-ENTRYPOINT [ "/app/tcpover", "-s", "-l", ":8080" ]
+CMD [ "/app/tcpover", "-s", "-l", ":8080" ]
