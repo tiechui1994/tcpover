@@ -1,14 +1,15 @@
-FROM golang:1.23 AS builder
+FROM golang:1.22-alpine AS builder
+RUN apk add build-base musl-dev
 WORKDIR /app
 COPY . .
-RUN go mod tidy && CGO_ENABLED=0 go build -o ./tcpover ./cmd/tcpover/main.go
-RUN CGO_ENABLED=0 go install github.com/anacrolix/torrent/cmd/torrent@latest && mv /go/bin/torrent /app
+RUN go mod tidy && \
+    CGO_ENABLED=0 go build -ldflags="-w -s" -o /app/tcpover ./cmd/tcpover && \
+    file /app/tcpover
 
 
 FROM ubuntu:latest
 WORKDIR /app
 COPY --from=builder /app/tcpover .
-COPY --from=builder /app/torrent /root
 COPY --from=builder /app/docker/init.sh .
 RUN bash init.sh
 ENTRYPOINT mkdir /run/sshd && \

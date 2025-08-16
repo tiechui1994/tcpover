@@ -404,7 +404,6 @@ function parseProtoAddress(proto, buffer) {
     return {hostname, port, remain}
 }
 
-
 function check(request) {
     if (!uuid) {
         uuid = new Date();
@@ -422,7 +421,7 @@ function safeCloseWebSocket(socket) {
     }
 }
 
-async function ws(request) {
+async function websocket(request) {
     const url = new URL(request.url);
 
     const name = url.searchParams.get("name")
@@ -492,7 +491,7 @@ async function ws(request) {
 }
 
 
-async function proxy(request, u) {
+async function forward(request, u) {
     const url = new URL(u)
     request.headers['host'] = url.host
     let init = {
@@ -518,11 +517,11 @@ export default {
             const host = hosts[(new Date()).valueOf() % hosts.length]
             const u = "https://" + host + path
             console.log("request url:", u)
-            return await proxy(request, u)
+            return await forward(request, u)
         } else if (path.startsWith("/https://") || path.startsWith("/http://")) {
             const u = path.substring(1)
             console.log("request url:", u)
-            return await proxy(request, u)
+            return await forward(request, u)
         }
 
         const upgradeHeader = request.headers.get('Upgrade');
@@ -531,12 +530,10 @@ export default {
                 case "/check":
                     return check(request)
                 default:
-                    return new Response("<h1>Hello World</h1>", {
-                        status: 200,
-                    });
+                    return new Response("hello world");
             }
-        } else if (url.pathname === "/~/ssh") {
-            return await ws(request)
+        } else if (url.pathname === "/api/ssh") {
+            return await websocket(request)
         }
     }
 }

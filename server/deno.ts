@@ -147,7 +147,7 @@ function parseProtoAddress(proto: string, buffer: any) {
     return {hostname, port, remain}
 }
 
-app.get("/api/ws", async (c) => {
+app.get("/api/ssh", async (c) => {
     const upgrade = c.req.headers.get("upgrade") || "";
     if (upgrade.toLowerCase() != "websocket") {
         return new Response("request isn't trying to upgrade to websocket.");
@@ -195,7 +195,7 @@ app.get("/api/ws", async (c) => {
     return response
 })
 
-app.get("/~/ws", async (c) => {
+app.get("/~/ssh", async (c) => {
     const upgrade = c.req.headers.get("upgrade") || "";
     if (upgrade.toLowerCase() != "websocket") {
         return new Response("request isn't trying to upgrade to websocket.");
