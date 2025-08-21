@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/tiechui1994/tcpover/transport/mux"
-	"log"
 	"net"
 	"regexp"
 	"sync"
@@ -14,9 +12,11 @@ import (
 
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/common/bufio"
+	"github.com/tiechui1994/tcpover/transport/mux"
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
+	"github.com/tiechui1994/tool/log"
 )
 
 const (
@@ -26,13 +26,13 @@ const (
 )
 
 type WlessOption struct {
-	Name   string   `proxy:"name"`
-	Local  string   `proxy:"local"`
-	Remote string   `proxy:"remote"`
-	Mode   wss.Mode `proxy:"mode"`
-	Server string   `proxy:"server"`
-	Direct string   `proxy:"direct"`
-	Mux    bool     `proxy:"mux"`
+	Name   string            `proxy:"name"`
+	Local  string            `proxy:"local"`
+	Remote string            `proxy:"remote"`
+	Mode   wss.Mode          `proxy:"mode"`
+	Server string            `proxy:"server"`
+	Direct string            `proxy:"direct"`
+	Mux    bool              `proxy:"mux"`
 	Header map[string]string `proxy:"header"`
 }
 
@@ -99,21 +99,21 @@ try:
 		times = 1
 	}
 	conn, err := wss.RawWebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
-		Name: name,
-		Role: wss.RoleManager,
+		Name:   name,
+		Role:   wss.RoleManager,
 		Header: wss.Header("", header),
 	})
 	if err != nil {
-		log.Printf("Manage::DialContext: %v", err)
+		log.Errorln("Manage::DialContext: %v", err)
 		times = times * 2
 		goto try
 	}
 
 	var onceClose sync.Once
 	closeFunc := func() {
-		log.Printf("Manage Socket Close: %v", conn.Close())
+		log.Errorln("Manage Socket Close: %v", conn.Close())
 		c.manage(name, header)
-		log.Printf("Reconnect to server success")
+		log.Errorln("Reconnect to server success")
 	}
 
 	go func() {
@@ -126,18 +126,18 @@ try:
 				return
 			}
 			if err != nil {
-				log.Printf("ReadMessage: %+v", err)
+				log.Errorln("ReadMessage: %+v", err)
 				continue
 			}
 			err = json.Unmarshal(p, &cmd)
 			if err != nil {
-				log.Printf("Unmarshal: %v", err)
+				log.Errorln("Decode: %v", err)
 				continue
 			}
 
 			switch cmd.Command {
 			case CommandLink:
-				log.Printf("ControlMessage => cmd %v, data: %v", cmd.Command, cmd.Data)
+				log.Debugln("ControlMessage => cmd %v, data: %v", cmd.Command, cmd.Data)
 				go func() {
 					code := cmd.Data["Code"].(string)
 					network := cmd.Data["Network"].(string)
@@ -148,7 +148,7 @@ try:
 						err = c.connectLocal(code, network, proto, header)
 					}
 					if err != nil {
-						log.Println("ConnectLocal:", err)
+						log.Errorln("ConnectLocal:", err)
 					}
 				}()
 			}
@@ -158,9 +158,9 @@ try:
 
 func (c *PassiveResponder) connectLocal(code, network, proto string, header map[string]string) error {
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
-		Code: code,
-		Role: wss.RoleAgent,
-		Mode: wss.ModeForward,
+		Code:   code,
+		Role:   wss.RoleAgent,
+		Mode:   wss.ModeForward,
 		Header: wss.Header(proto, header),
 	})
 	if err != nil {
@@ -194,9 +194,9 @@ func (c *PassiveResponder) connectLocal(code, network, proto string, header map[
 
 func (c *PassiveResponder) connectLocalMux(code, network, proto string, header map[string]string) error {
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
-		Code: code,
-		Role: wss.RoleAgent,
-		Mode: wss.ModeForwardMux,
+		Code:   code,
+		Role:   wss.RoleAgent,
+		Mode:   wss.ModeForwardMux,
 		Header: wss.Header(proto, header),
 	})
 	if err != nil {
@@ -213,16 +213,16 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string, header m
 		return err
 	}
 
-	log.Printf("conncet count: %v", atomic.AddInt32(&(c.count), 1))
+	log.Debugln("conncet count: %v", atomic.AddInt32(&(c.count), 1))
 	server := mux.NewServer()
 	go func() {
 		defer func() {
-			log.Printf("disConncet count: %v", atomic.AddInt32(&(c.count), -1))
+			log.Debugln("disConncet count: %v", atomic.AddInt32(&(c.count), -1))
 			conn.Close()
 		}()
 		err = server.NewConnection(conn)
 		if err != nil {
-			log.Printf("NewConnection: %v", err)
+			log.Errorln("NewConnection: %v", err)
 		}
 	}()
 

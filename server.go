@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -26,6 +25,7 @@ import (
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
+	"github.com/tiechui1994/tool/log"
 	"github.com/tiechui1994/tool/util"
 )
 
@@ -64,7 +64,7 @@ func NewServer() *Server {
 func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (remote net.Conn, addr string, err error) {
 	socket, err := s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
-		log.Printf("upgrade error: %v", err)
+		log.Errorln("upgrade error: %v", err)
 		return nil, "", fmt.Errorf("upgrade error: %v", err)
 	}
 
@@ -73,7 +73,7 @@ func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (
 		if err != nil {
 			remote.Close()
 		} else {
-			log.Printf("connect addr: %v", addr)
+			log.Debugln("connect addr: %v", addr)
 		}
 	}()
 
@@ -81,7 +81,7 @@ func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (
 	if proto == "" {
 		proto = r.URL.Query().Get("proto")
 	}
-	log.Printf("proto %v", proto)
+	log.Debugln("proto %v", proto)
 	switch proto {
 	case ctx.Vless:
 		_, _, addr, err = vless.ReadConnFirstPacket(remote)
@@ -95,7 +95,7 @@ func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (
 func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Request, w http.ResponseWriter) {
 	socket, err := s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
-		log.Printf("upgrade error: %v", err)
+		log.Errorln("upgrade error: %v", err)
 		http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -105,7 +105,7 @@ func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Reques
 	if name != "" {
 		manage, ok := s.manageConn.Load(name)
 		if !ok {
-			log.Printf("agent [%v] not running", name)
+			log.Errorln("agent [%v] not running", name)
 			http.Error(w, fmt.Sprintf("Agent [%v] not connect", name), http.StatusBadRequest)
 			return
 		}
@@ -162,7 +162,7 @@ func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
 
 	local, err := net.Dial("tcp", addr)
 	if err != nil {
-		log.Printf("tcp connect [%v] : %v", addr, err)
+		log.Debugln("tcp connect [%v] : %v", addr, err)
 		http.Error(w, fmt.Sprintf("tcp connect failed: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -184,14 +184,14 @@ func (s *Server) directConnectMux(r *http.Request, w http.ResponseWriter) {
 	server := mux.NewServer()
 	err = server.NewConnection(remote)
 	if err != nil {
-		log.Printf("NewConnection: %v", err)
+		log.Errorln("NewConnection: %v", err)
 	}
 }
 
 func (s *Server) manageConnect(name string, r *http.Request, w http.ResponseWriter) {
 	conn, err := s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
-		log.Printf("upgrade error: %v", err)
+		log.Errorln("upgrade error: %v", err)
 		http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -208,7 +208,7 @@ func (s *Server) manageConnect(name string, r *http.Request, w http.ResponseWrit
 			Data:    map[string]interface{}{},
 		})
 		if wss.IsClose(err) {
-			log.Printf("closing ..... : %v", conn.Close())
+			log.Errorln("closing ..... : %v", conn.Close())
 			return
 		}
 	}
@@ -235,7 +235,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			u, _ = url.Parse("https://api.quinn.eu.org")
 		}
-		log.Printf("proxy url: %v", u)
+		log.Infoln("proxy url: %v", u)
 		s.ProxyHandler(u, w, r)
 		return
 	}
@@ -245,9 +245,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	role := r.URL.Query().Get("rule")
 	mode := wss.Mode(r.URL.Query().Get("mode"))
 
-	log.Printf("enter connections:%v, code:%v, name:%v, role:%v, mode:%v", atomic.AddInt32(&s.conn, +1), code, name, role, mode)
+	log.Debugln("enter connections:%v, code:%v, name:%v, role:%v, mode:%v", atomic.AddInt32(&s.conn, +1), code, name, role, mode)
 	defer func() {
-		log.Printf("leave connections:%v  code:%v, name:%v, role:%v, mode:%v", atomic.AddInt32(&s.conn, -1), code, name, role, mode)
+		log.Debugln("leave connections:%v  code:%v, name:%v, role:%v, mode:%v", atomic.AddInt32(&s.conn, -1), code, name, role, mode)
 	}()
 
 	// 情况1: 直接连接

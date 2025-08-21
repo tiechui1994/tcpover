@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
+	"github.com/tiechui1994/tool/log"
 )
 
 var (
@@ -46,7 +46,7 @@ func (c *Client) Std(remoteName, remoteAddr string, _type ctx.ProxyType, header 
 	}
 
 	if err := c.stdConnectServer(std, remoteName, remoteAddr, _type, header); err != nil {
-		log.Printf("Std::ConnectServer %v", err)
+		log.Errorln("Std::ConnectServer %v", err)
 		return err
 	}
 
@@ -64,7 +64,7 @@ func (c *Client) Serve(config config.RawConfig) error {
 	}
 
 	listenAddr := fmt.Sprintf("%v", config.Listen)
-	log.Printf("listen [%v] ...", config.Listen)
+	log.Infoln("listen [%v] ...", config.Listen)
 	err := transport.RegisterListener("mixed", listenAddr)
 	if err != nil {
 		return err
@@ -82,9 +82,9 @@ func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAd
 	}
 
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
-		Name: remoteName,
-		Role: wss.RoleConnector,
-		Mode: mode,
+		Name:   remoteName,
+		Role:   wss.RoleConnector,
+		Mode:   mode,
 		Header: wss.Header(proto, header),
 	})
 	if err != nil {
@@ -94,7 +94,8 @@ func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAd
 	switch proto {
 	case ctx.Vless:
 		client, _ := vless.NewClient("")
-		host, port, err := net.SplitHostPort(remoteAddr)
+		var host, port string
+		host, port, err = net.SplitHostPort(remoteAddr)
 		if err != nil {
 			return err
 		}

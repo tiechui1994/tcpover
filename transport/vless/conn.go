@@ -6,8 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
+
+	"github.com/tiechui1994/tool/log"
 )
 
 type Conn struct {
@@ -141,7 +142,7 @@ func ReadConnFirstPacket(conn net.Conn) (id string, command int, addr string, er
 			addr = net.JoinHostPort(string(buf), fmt.Sprintf("%v", port))
 		}
 
-		log.Printf("read addr: %v", addr)
+		log.Debugln("read addr: %v", addr)
 
 		// reply vless response
 		buf = make([]byte, 1+1)
@@ -153,4 +154,3 @@ func ReadConnFirstPacket(conn net.Conn) (id string, command int, addr string, er
 
 	return id, command, addr, nil
 }
-

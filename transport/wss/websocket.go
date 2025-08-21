@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tiechui1994/tool/log"
 )
 
 const (
@@ -69,7 +69,7 @@ var (
 		Proxy: http.ProxyFromEnvironment,
 		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			v := addr
-			log.Printf("DialContext [%v]: %v", addr, v)
+			log.Debugln("DialContext [%v]: %v", addr, v)
 			return (&net.Dialer{}).DialContext(context.Background(), network, v)
 		},
 		HandshakeTimeout: 45 * time.Second,
@@ -115,7 +115,7 @@ func RawWebSocketConnect(ctx context.Context, server string, param *ConnectParam
 	return conn, err
 }
 
-func Header(proto string, header map[string]string) http.Header  {
+func Header(proto string, header map[string]string) http.Header {
 	h := make(http.Header)
 	for k, v := range header {
 		h.Set(k, v)

@@ -3,15 +3,16 @@ package outbound
 import (
 	"context"
 	"fmt"
+	"net"
+	"regexp"
+
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/mux"
 	"github.com/tiechui1994/tcpover/transport/socks5"
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
-	"log"
-	"net"
-	"regexp"
+	"github.com/tiechui1994/tool/log"
 )
 
 type VlessOption struct {
@@ -82,7 +83,7 @@ func newWlessDirectConnDispatcher(option WlessOption) (*directConnDispatcher, er
 	client := wless.NewClient()
 
 	handleOption(&option)
-	log.Printf("mux: %v, %v", option.Mux, option.Mode)
+	log.Debugln("mux: %v, %v", option.Mux, option.Mode)
 
 	muxClient := mux.NewClient(func() (net.Conn, error) {
 		conn, err := connect(context.Background(), option.Mode, option.Server, option.Remote, ctx.Wless, option.Header)
@@ -111,7 +112,7 @@ func newWlessDirectConnDispatcher(option WlessOption) (*directConnDispatcher, er
 
 func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, error) {
 	handleOption(&(option.WlessOption))
-	log.Printf("mux: %v, %v", option.Mux, option.Mode)
+	log.Debugln("mux: %v, %v", option.Mux, option.Mode)
 
 	client, err := vless.NewClient(option.UUID)
 	if err != nil {
@@ -126,10 +127,10 @@ func newVlessDirectConnDispatcher(option VlessOption) (*directConnDispatcher, er
 
 		domain := "sp.mux.sing-box.arpa"
 		return client.StreamConn(conn, &vless.DstAddr{
-			UDP: false,
+			UDP:      false,
 			AddrType: vless.AtypDomainName,
-			Addr: append([]byte{byte(len(domain))}, []byte(domain)...),
-			Port: 444,
+			Addr:     append([]byte{byte(len(domain))}, []byte(domain)...),
+			Port:     444,
 		})
 	})
 
@@ -158,9 +159,9 @@ func connect(ctx context.Context, optionMode wss.Mode, optionServer, remoteName 
 	//       远程代理, name not empty
 	// mode: ModeDirect | ModeForward
 	conn, err := wss.WebSocketConnect(ctx, optionServer, &wss.ConnectParam{
-		Name: remoteName,
-		Mode: optionMode,
-		Role: wss.RoleAgent,
+		Name:   remoteName,
+		Mode:   optionMode,
+		Role:   wss.RoleAgent,
 		Header: wss.Header(proxyType, header),
 	})
 	if err != nil {
@@ -171,7 +172,7 @@ func connect(ctx context.Context, optionMode wss.Mode, optionServer, remoteName 
 }
 
 func (c *directConnDispatcher) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
-	log.Println("dispatcher: ", metadata.SourceAddress(), "=>", metadata.RemoteAddress())
+	log.Debugln("dispatcher: %v => %v", metadata.SourceAddress(), metadata.RemoteAddress())
 	return c.createConn(ctx, metadata)
 }
 

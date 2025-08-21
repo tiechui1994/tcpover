@@ -4,12 +4,12 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
-	"log"
 	random "math/rand"
 	"os"
 	"time"
 
 	"github.com/tiechui1994/tcpover/transport/wss"
+	"github.com/tiechui1994/tool/log"
 )
 
 type StdReadWriteCloser struct {
@@ -117,7 +117,7 @@ func (s *randomReadWriteCloser) Read(p []byte) (n int, err error) {
 	copy(p[:n-len(suffix)], data)
 	copy(p[n-len(suffix):], suffix)
 
-	log.Printf("%v ==> %v", len(p), n)
+	log.Debugln("%v ==> %v", len(p), n)
 	_, _ = s.in.Write(p[:n])
 	return n, err
 }

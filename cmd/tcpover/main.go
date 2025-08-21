@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,12 +16,13 @@ import (
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/outbound"
 	"github.com/tiechui1994/tcpover/transport/wss"
+	"github.com/tiechui1994/tool/log"
 )
 
 var debug bool
 
 func init() {
-	log.SetFlags(log.Lshortfile | log.Ltime)
+	log.SetLevel(log.DebugLevel)
 }
 
 type header struct {
@@ -96,9 +96,9 @@ func main() {
 		}
 
 		go func() {
-			log.Printf("addr %s tcpover service is starting...", *listenAddr)
+			log.Infoln("addr %s tcpover service is starting...", *listenAddr)
 			if err := app.ListenAndServe(); err != nil {
-				log.Printf("failed to start server: %v", err)
+				log.Errorln("failed to start server: %v", err)
 			}
 		}()
 
@@ -106,10 +106,10 @@ func main() {
 		signal.Notify(sigtermC, os.Interrupt, syscall.SIGTERM, syscall.SIGABRT)
 
 		<-sigtermC // block until SIGTERM is received
-		log.Printf("SIGTERM received: gracefully shutting down...")
+		log.Errorln("SIGTERM received: gracefully shutting down...")
 
 		if err := app.Shutdown(context.Background()); err != nil {
-			log.Printf("server shutdown error: %v", err)
+			log.Errorln("server shutdown error: %v", err)
 		}
 		return
 	}
@@ -121,7 +121,7 @@ func main() {
 			_type = ctx.Vless
 		}
 		if err := c.Std(*remoteName, *remoteAddr, _type, h.data); err != nil {
-			log.Fatalln(err)
+			log.Fatalln("%v", err)
 		}
 		return
 	}
@@ -137,15 +137,15 @@ func main() {
 		if *name == "" && *remoteName == "" {
 			mode = wss.ModeDirect
 		} else if *name != "" && *remoteName == "" {
-			log.Printf("register agent name [%v] ...", *name)
+			log.Infoln("register agent name [%v] ...", *name)
 			// 要注册本地名称.
 			mode = wss.ModeForward
 		} else if *name == "" && *remoteName != "" {
-			log.Printf("connect to remote name [%v] ...", *remoteName)
+			log.Infoln("connect to remote name [%v] ...", *remoteName)
 			// 要连接到远端
 			mode = wss.ModeForward
 		} else if *name != "" && *remoteName != "" {
-			log.Printf("register agent name [%v and connect remote name [%v] ...", *name, *remoteName)
+			log.Infoln("register agent name [%v and connect remote name [%v] ...", *name, *remoteName)
 			// 自己要注册, 要连接到远端
 			mode = wss.ModeForward
 		}
@@ -180,7 +180,7 @@ func main() {
 			Proxies: proxies,
 		})
 		if err != nil {
-			log.Fatalln(err)
+			log.Fatalln("%v", err)
 		}
 		return
 	}

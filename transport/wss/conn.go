@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/tiechui1994/tool/log"
 )
 
 type websocketConn struct {
@@ -114,7 +115,7 @@ func (wsc *websocketConn) SetWriteDeadline(t time.Time) error {
 	return wsc.conn.SetWriteDeadline(t)
 }
 
-func NewWebsocketConn(conn *websocket.Conn) net.Conn  {
+func NewWebsocketConn(conn *websocket.Conn) net.Conn {
 	return &websocketConn{
 		conn:       conn,
 		remoteAddr: conn.RemoteAddr(),
@@ -206,7 +207,7 @@ func IsClose(err error) bool {
 		if vv, ok := v.Err.(syscall.Errno); ok {
 			result := isSyscallError(vv)
 			if result {
-				fmt.Println("net.OpError", err)
+				log.Infoln("net OpError: %v", err)
 			}
 			return result
 		}
@@ -215,7 +216,7 @@ func IsClose(err error) bool {
 	if v, ok := err.(syscall.Errno); ok {
 		result := isSyscallError(v)
 		if result {
-			fmt.Println("syscall.Errno", err)
+			log.Infoln("syscall Errno: %v", err)
 		}
 		return result
 	}
@@ -223,15 +224,14 @@ func IsClose(err error) bool {
 	if strings.Contains(err.Error(), "use of closed network connection") ||
 		strings.Contains(err.Error(), "broken pipe") ||
 		strings.Contains(err.Error(), "connection reset by peer") {
-		fmt.Println("contains broken", err)
+		log.Infoln("contains broken: %v", err)
 		return true
 	}
 
 	if errors.Is(err, websocket.ErrCloseSent) {
-		fmt.Println("websocket close sent", err)
+		log.Infoln("websocket close sent: %v", err)
 		return true
 	}
 
 	return false
 }
-

@@ -3,8 +3,9 @@ package mux
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"net"
+
+	"github.com/tiechui1994/tool/log"
 )
 
 type serverConn struct {
@@ -22,7 +23,7 @@ func (c *serverConn) Write(b []byte) (n int, err error) {
 	buffer.Write(b)
 	_, err = c.Conn.Write(buffer.Bytes())
 	if err != nil {
-		log.Printf("server write mux status: %v", err)
+		log.Errorln("server write mux status: %v", err)
 		return
 	}
 	c.responseWritten = true
@@ -39,7 +40,7 @@ type clientConn struct {
 func (c *clientConn) readResponse() error {
 	response, err := ReadStreamResponse(c.Conn)
 	if err != nil {
-		log.Printf("client read mux status: %v", err)
+		log.Errorln("client read mux status: %v", err)
 		return err
 	}
 	if response.Status == statusError {
