@@ -29,6 +29,7 @@ func (s *Service) NewConnection(conn net.Conn) error {
 		log.Errorln("service create session proto %v : %v", request.Protocol, err)
 		return err
 	}
+	defer session.Close()
 
 	var stream net.Conn
 	for {

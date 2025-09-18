@@ -30,6 +30,10 @@ func (c *serverConn) Write(b []byte) (n int, err error) {
 	return len(b), nil
 }
 
+func (c *serverConn) Close() error {
+	return c.Conn.Close()
+}
+
 type clientConn struct {
 	net.Conn
 	destination    string
