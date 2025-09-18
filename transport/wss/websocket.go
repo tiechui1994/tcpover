@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/tiechui1994/tool/log"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/tiechui1994/tool/log"
 )
 
 const (
@@ -65,12 +65,20 @@ type ConnectParam struct {
 }
 
 var (
+	DialProxy func(ctx context.Context, network, addr string) (string, error)
+
 	dialer = &websocket.Dialer{
 		Proxy: http.ProxyFromEnvironment,
 		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			v := addr
-			log.Debugln("DialContext [%v]: %v", addr, v)
-			return (&net.Dialer{}).DialContext(context.Background(), network, v)
+			var err error
+			if DialProxy != nil {
+				addr, err = DialProxy(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+			}
+			log.Debugln("DialContext [%v]: %v", addr, addr)
+			return (&net.Dialer{}).DialContext(context.Background(), network, addr)
 		},
 		HandshakeTimeout: 45 * time.Second,
 		WriteBufferSize:  SocketBufferLength,

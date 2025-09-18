@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -60,6 +61,8 @@ func main() {
 	remoteAddr := flag.String("addr", "", "want to connect remote addr. [C]")
 
 	vless := flag.Bool("vless", false, "support vless protocol. default wless protocol")
+	cloudflare := flag.Bool("cf", false, "cloudflare proxy ip")
+	gcore := flag.Bool("gc", false, "gcore proxy ip")
 
 	h := new(header)
 	flag.Var(h, "H", "protocol http header. [C]")
@@ -115,6 +118,23 @@ func main() {
 	}
 
 	if *runAsConnector {
+		if *gcore {
+			wss.DialProxy = func(ctx context.Context, network, addr string) (string, error) {
+				_, port, err := net.SplitHostPort(addr)
+				domain := net.JoinHostPort("gcore.182682.xyz", port)
+				log.Infoln("Dial [%v] => %v", addr, domain)
+				return domain, err
+			}
+		}
+		if *cloudflare {
+			wss.DialProxy = func(ctx context.Context, network, addr string) (string, error) {
+				_, port, err := net.SplitHostPort(addr)
+				domain := net.JoinHostPort("cloudflare.182682.xyz", port)
+				log.Infoln("Dial [%v] => %v", addr, domain)
+				return domain, err
+			}
+		}
+
 		c := tcpover.NewClient(*serverEndpoint, nil)
 		_type := ctx.Wless
 		if *vless {
