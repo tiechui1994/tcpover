@@ -65,16 +65,15 @@ type ConnectParam struct {
 }
 
 var (
-	DialProxy func(ctx context.Context, network, addr string) (string, error)
+	DialProxy func(ctx context.Context, network, addr string) (net.Conn, error)
 
 	dialer = &websocket.Dialer{
 		Proxy: http.ProxyFromEnvironment,
 		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			var err error
 			if DialProxy != nil {
-				addr, err = DialProxy(ctx, network, addr)
-				if err != nil {
-					return nil, err
+				conn, err := DialProxy(ctx, network, addr)
+				if err == nil {
+					return conn, nil
 				}
 			}
 			log.Debugln("DialContext [%v]: %v", addr, addr)

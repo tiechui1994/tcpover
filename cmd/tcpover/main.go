@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/tiechui1994/tcpover"
 	"github.com/tiechui1994/tcpover/config"
 	"github.com/tiechui1994/tcpover/ctx"
@@ -21,10 +22,6 @@ import (
 )
 
 var debug bool
-
-func init() {
-	log.SetLevel(log.DebugLevel)
-}
 
 type header struct {
 	data map[string]string
@@ -118,20 +115,45 @@ func main() {
 	}
 
 	if *runAsConnector {
-		if *gcore {
-			wss.DialProxy = func(ctx context.Context, network, addr string) (string, error) {
-				_, port, err := net.SplitHostPort(addr)
-				domain := net.JoinHostPort("gcore.182682.xyz", port)
-				log.Infoln("Dial [%v] => %v", addr, domain)
-				return domain, err
+		logrus.SetFormatter(&logrus.TextFormatter{
+			DisableTimestamp: true,
+			DisableQuote:     true,
+		})
+		if *cloudflare || *gcore {
+			var cname []string
+			if *cloudflare {
+				cname = []string{"cloudflare.182682.xyz", "bestcf.top"}
 			}
-		}
-		if *cloudflare {
-			wss.DialProxy = func(ctx context.Context, network, addr string) (string, error) {
-				_, port, err := net.SplitHostPort(addr)
-				domain := net.JoinHostPort("cloudflare.182682.xyz", port)
+			if *gcore {
+				cname = []string{"gcore.182682.xyz", "core.quinn.eu.org"}
+			}
+			dialer := net.Dialer{
+				Timeout:   5 * time.Second,
+				KeepAlive: time.Second * 30,
+				Resolver: &net.Resolver{
+					PreferGo: true,
+					Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+						list := [4]string{
+							"114.114.114.114:53", "114.215.126.16:53",
+							"208.67.222.222:53", "223.5.5.5:53",
+						}
+						address = list[time.Now().UnixMicro()%4]
+						return net.Dial(network, address)
+					},
+				},
+			}
+			wss.DialProxy = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				_, port, _ := net.SplitHostPort(addr)
+				domain := net.JoinHostPort(cname[int(time.Now().UnixMicro())%len(cname)], port)
 				log.Infoln("Dial [%v] => %v", addr, domain)
-				return domain, err
+				retry := true
+			retry:
+				conn, err := dialer.Dial(network, addr)
+				if err != nil && retry {
+					retry = false
+					goto retry
+				}
+				return conn, err
 			}
 		}
 
