@@ -7,7 +7,6 @@ import (
 	"net"
 	"regexp"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/tiechui1994/tcpover/ctx"
@@ -202,6 +201,9 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string, header m
 	if err != nil {
 		return err
 	}
+	defer func() {
+		conn.Close()
+	}()
 
 	switch proto {
 	case ctx.Vless:
@@ -213,18 +215,10 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string, header m
 		return err
 	}
 
-	log.Debugln("conncet count: %v", atomic.AddInt32(&(c.count), 1))
 	server := mux.NewServer()
-	go func() {
-		defer func() {
-			log.Debugln("disConncet count: %v", atomic.AddInt32(&(c.count), -1))
-			conn.Close()
-		}()
-		err = server.NewConnection(conn)
-		if err != nil {
-			log.Errorln("NewConnection: %v", err)
-		}
-	}()
-
-	return nil
+	err = server.NewConnection(conn)
+	if err != nil {
+		log.Errorln("NewConnection: %v", err)
+	}
+	return err
 }

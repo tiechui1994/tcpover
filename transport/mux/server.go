@@ -48,7 +48,6 @@ func (s *Service) NewConnection(conn net.Conn) error {
 		// read mux addr
 		request, err := ReadStreamRequest(stream)
 		if err != nil {
-			conn.Close()
 			log.Errorln("read mux stream request: %v", err)
 			continue
 		}
@@ -56,7 +55,6 @@ func (s *Service) NewConnection(conn net.Conn) error {
 		log.Debugln("server dial connect addr: %v", request.Destination)
 		local, err := net.Dial(request.Network, request.Destination)
 		if err != nil {
-			conn.Close()
 			log.Errorln("net dial: %v", err)
 			continue
 		}

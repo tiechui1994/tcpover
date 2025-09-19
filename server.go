@@ -62,19 +62,22 @@ func NewServer() *Server {
 }
 
 func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (remote net.Conn, addr string, err error) {
-	socket, err := s.upgrade.Upgrade(w, r, s.defaultHeader)
+	var socket *websocket.Conn
+	socket, err = s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
-		log.Errorln("upgrade error: %v", err)
-		return nil, "", fmt.Errorf("upgrade error: %v", err)
+		if _, ok := err.(websocket.HandshakeError); !ok {
+			http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusInternalServerError)
+		}
+		return nil, "", fmt.Errorf("upgrade error: %w", err)
 	}
 
 	remote = wss.NewWebsocketConn(socket)
 	defer func() {
 		if err != nil {
 			remote.Close()
-		} else {
-			log.Debugln("connect addr: %v", addr)
+			return
 		}
+		log.Debugln("connect addr: %v", addr)
 	}()
 
 	var proto = r.Header.Get("proto")
@@ -95,18 +98,20 @@ func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (
 func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Request, w http.ResponseWriter) {
 	socket, err := s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
+		if _, ok := err.(websocket.HandshakeError); !ok {
+			http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusInternalServerError)
+		}
 		log.Errorln("upgrade error: %v", err)
-		http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusInternalServerError)
 		return
 	}
 	conn := wss.NewWebsocketConn(socket)
+	defer conn.Close()
 
 	// active connection
 	if name != "" {
 		manage, ok := s.manageConn.Load(name)
 		if !ok {
 			log.Errorln("agent [%v] not running", name)
-			http.Error(w, fmt.Sprintf("Agent [%v] not connect", name), http.StatusBadRequest)
 			return
 		}
 
@@ -156,14 +161,14 @@ func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Reques
 func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
 	remote, addr, err := s.getConnectConnAndAddr(r, w)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Errorln("%v", err)
 		return
 	}
+	defer remote.Close()
 
 	local, err := net.Dial("tcp", addr)
 	if err != nil {
 		log.Debugln("tcp connect [%v] : %v", addr, err)
-		http.Error(w, fmt.Sprintf("tcp connect failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -173,13 +178,10 @@ func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
 func (s *Server) directConnectMux(r *http.Request, w http.ResponseWriter) {
 	remote, _, err := s.getConnectConnAndAddr(r, w)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Errorln("%v", err)
 		return
 	}
-
-	defer func() {
-		remote.Close()
-	}()
+	defer remote.Close()
 
 	server := mux.NewServer()
 	err = server.NewConnection(remote)
@@ -191,17 +193,19 @@ func (s *Server) directConnectMux(r *http.Request, w http.ResponseWriter) {
 func (s *Server) manageConnect(name string, r *http.Request, w http.ResponseWriter) {
 	conn, err := s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
+		if _, ok := err.(websocket.HandshakeError); !ok {
+			http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusInternalServerError)
+		}
 		log.Errorln("upgrade error: %v", err)
-		http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusBadRequest)
 		return
 	}
+	defer conn.Close()
 
 	s.manageConn.Store(name, conn)
 	defer s.manageConn.Delete(name)
 
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
-
 	for range ticker.C {
 		err := conn.WriteJSON(ControlMessage{
 			Command: CommandPing,
@@ -225,6 +229,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.URL.Path == "/" {
+			closed := r.URL.Query().Get("close")
+			if closed != "" {
+				s.Version(w, r)
+				time.AfterFunc(5*time.Second, func() {
+					os.Exit(0)
+				})
+				return
+			}
+
 			s.Version(w, r)
 			return
 		}
