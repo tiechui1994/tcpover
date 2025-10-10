@@ -68,11 +68,11 @@ class WebSocketStream {
                     controller.enqueue(new Uint8Array(event.data));
                 };
                 socket.socket.onerror = (e) => {
-                    console.log("<readable onerror>", e.message)
+                    console.warn("<readable onerror>", e.message)
                     controller.error(e)
                 }
                 socket.socket.onclose = () => {
-                    console.log("<readable onclose>:", socket.attrs)
+                    console.warn("<readable onclose>:", socket.attrs)
                     controller.close()
                 }
             },
@@ -85,10 +85,10 @@ class WebSocketStream {
         this.writable = new WritableStream({
             start(controller) {
                 socket.socket.onerror = (e) => {
-                    console.log("<writable onerror>:", e.message)
+                    console.warn("<writable onerror>:", e.message)
                 }
                 socket.socket.onclose = () => {
-                    console.log("<writable onclose>:" + socket.attrs)
+                    console.warn("<writable onclose>:" + socket.attrs)
                 };
             },
             write(chunk, controller) {
@@ -109,7 +109,7 @@ class MuxSocketStream {
         this.stream = stream;
         this.sessions = {}
         this.run().catch((err) => {
-            console.error("run::catch", err.stack)
+            console.warn("run::catch", err.stack)
             this.stream.socket.close(1000)
         })
     }
@@ -189,7 +189,7 @@ class MuxSocketStream {
                         return
                     }
 
-                    firstPacketRealLength = firstPacketRealLength +2
+                    firstPacketRealLength = firstPacketRealLength + 2
                     readRequest = false
                     chunk = firstBuffer.slice(firstPacketRealLength)
                     if (chunk.byteLength === 0) {
@@ -218,19 +218,19 @@ class MuxSocketStream {
                     switch (chunk[2]) {
                         case 1:
                             hostname = chunk.slice(3, 3 + 4).join(".")
-                            port = chunk[3+4+1] | chunk[3+4] << 8
-                            chunk = chunk.slice(3+4+2)
+                            port = chunk[3 + 4 + 1] | chunk[3 + 4] << 8
+                            chunk = chunk.slice(3 + 4 + 2)
                             break
                         case 4:
                             hostname = chunk.slice(3, 3 + 16).join(":")
-                            port = chunk[3+16+1] | chunk[3+16] << 8
-                            chunk = chunk.slice(3+16+2)
+                            port = chunk[3 + 16 + 1] | chunk[3 + 16] << 8
+                            chunk = chunk.slice(3 + 16 + 2)
                             break
                         case 3:
                             const length = chunk[3]
-                            hostname = new TextDecoder().decode(chunk.slice(4,4+length))
-                            port = chunk[4+length+1] | chunk[4+length] << 8
-                            chunk = chunk.slice(4+length+2)
+                            hostname = new TextDecoder().decode(chunk.slice(4, 4 + length))
+                            port = chunk[4 + length + 1] | chunk[4 + length] << 8
+                            chunk = chunk.slice(4 + length + 2)
                             break
                     }
                     const current = {
@@ -241,7 +241,7 @@ class MuxSocketStream {
                     console.info(`domain: ${hostname}:${port}, ${current.id}`)
                     const conn = connect(`${hostname}:${port}`, {secureTransport: "off"})
                     const writer = conn.writable.getWriter()
-                    if (chunk.byteLength > 0 ) {
+                    if (chunk.byteLength > 0) {
                         await writer.write(chunk)
                     }
 
@@ -267,7 +267,7 @@ class MuxSocketStream {
                                 const size = index + 2048 < N ? 2048 : N - index
                                 // length
                                 const L1 = (size >> 8) & Mask
-                                const L2 =  size & Mask
+                                const L2 = size & Mask
                                 // id
                                 const I1 = (current.id >> 24) & Mask
                                 const I2 = (current.id >> 16) & Mask
@@ -286,7 +286,7 @@ class MuxSocketStream {
                         abort(e) {
                         },
                     })).catch((err) => {
-                        console.error("connect::catch", err.stack)
+                        console.warn("connect::catch", err.stack)
                         current.buf.reset()
                         // id
                         const I1 = (current.id >> 24) & Mask
@@ -313,7 +313,7 @@ class MuxSocketStream {
                 }
 
                 if (command === PSH) {
-                    chunk = chunk.slice(muxHeaderLen, muxHeaderLen+length)
+                    chunk = chunk.slice(muxHeaderLen, muxHeaderLen + length)
                     const {conn, writer} = sessions[sessionID]
                     if (writer) {
                         await writer.write(chunk)
@@ -327,7 +327,7 @@ class MuxSocketStream {
         });
 
         await this.stream.readable.pipeTo(writableStream).catch((e) => {
-            console.error("read write", e)
+            console.warn("read write", e)
         })
     }
 
@@ -373,16 +373,16 @@ function parseProtoAddress(proto, buffer) {
             switch (buffer[21]) {
                 case 1:
                     hostname = buffer.slice(22, 22 + 4).join(".")
-                    remain = buffer.slice(22+4)
+                    remain = buffer.slice(22 + 4)
                     break
                 case 3:
                     hostname = buffer.slice(22, 22 + 16).join(":")
-                    remain = buffer.slice(22+16)
+                    remain = buffer.slice(22 + 16)
                     break
                 case 2:
                     const length = buffer[22]
                     hostname = new TextDecoder().decode(buffer.slice(23, 23 + length))
-                    remain = buffer.slice(23+length)
+                    remain = buffer.slice(23 + length)
                     break
             }
             break
@@ -397,7 +397,7 @@ function parseProtoAddress(proto, buffer) {
                 hostname = tokens[0].trim()
                 port = 443
             }
-            remain = buffer.slice(1+len)
+            remain = buffer.slice(1 + len)
             break
     }
 
@@ -417,7 +417,7 @@ function safeCloseWebSocket(socket) {
             socket.close();
         }
     } catch (error) {
-        console.error('safeCloseWebSocket error', error);
+        console.warn('safeCloseWebSocket error', error);
     }
 }
 
@@ -430,6 +430,7 @@ async function websocket(request) {
     const mode = url.searchParams.get("mode")
 
     if ([ruleConnector, ruleAgent].includes(rule) && [modeDirect, modeDirectMux].includes(mode)) {
+        // @ts-ignore
         const webSocketPair = new WebSocketPair();
         const [client, webSocket] = Object.values(webSocketPair);
         webSocket.accept();
@@ -452,11 +453,11 @@ async function websocket(request) {
                     writer.releaseLock();
                 }
                 remote.readable.pipeTo(local.writable).catch((e) => {
-                    console.error("socket exception", e.message)
+                    console.warn("socket exception", e.message)
                     safeCloseWebSocket(webSocket)
                 })
                 local.readable.pipeTo(remote.writable).catch((e) => {
-                    console.error("socket exception", e.message)
+                    console.warn("socket exception", e.message)
                     safeCloseWebSocket(webSocket)
                 })
             }
@@ -486,7 +487,7 @@ async function websocket(request) {
     }
 
     return new Response("Bad Request", {
-        status: 500,
+        status: 400,
     });
 }
 
@@ -517,11 +518,15 @@ export default {
             const host = hosts[(new Date()).valueOf() % hosts.length]
             const u = "https://" + host + path
             console.log("request url:", u)
-            return await forward(request, u)
+            return await forward(request, u).catch(e => {})
         } else if (path.startsWith("/https://") || path.startsWith("/http://")) {
             const u = path.substring(1)
             console.log("request url:", u)
-            return await forward(request, u)
+            try {
+                return await forward(request, u)
+            } catch (e) {
+                return new Response(e.message, {status: 400})
+            }
         }
 
         const upgradeHeader = request.headers.get('Upgrade');
@@ -533,7 +538,7 @@ export default {
                     return new Response("hello world");
             }
         } else if (url.pathname === "/api/ssh") {
-            return await websocket(request)
+            return await websocket(request).catch(e => {})
         }
     }
 }
