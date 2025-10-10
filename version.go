@@ -1,3 +1,3 @@
 package tcpover
 
-const Version = "v0.0.5-0.20250919020337-3b719d95fa77"
+const Version = "v0.0.5-0.20251010090117-01350fabb7d5"
