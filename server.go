@@ -22,6 +22,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/common/bufio"
+	"github.com/tiechui1994/tcpover/transport/inbound"
 	"github.com/tiechui1994/tcpover/transport/mux"
 	"github.com/tiechui1994/tcpover/transport/shadowsocks/core"
 	"github.com/tiechui1994/tcpover/transport/socks5"
@@ -366,37 +367,61 @@ const (
 	CommandPing = 0x02
 )
 
-func (s *Server) SSrServer(ctx context.Context, port uint16) error {
-	lister, err := net.Listen("tcp", ":8080")
+func (s *Server) SS(c context.Context, port uint16, name, password string) error {
+	listen, err := net.Listen("tcp", fmt.Sprintf(":%v", port))
 	if err != nil {
 		return err
 	}
 
-	cipher, err := core.PickCipher("CHACHA20-IETF-POLY1305", nil, "123456")
+	cipher, err := core.PickCipher(name, nil, password)
 	if err != nil {
 		return err
 	}
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-c.Done():
 			return nil
 		default:
-			conn, err := lister.Accept()
+			conn, err := listen.Accept()
 			if err != nil {
 				continue
 			}
 			go func() {
 				conn := cipher.StreamConn(conn)
-
 				target, err := socks5.ReadAddr0(conn)
 				if err != nil {
 					_ = conn.Close()
 					return
 				}
 
-				_ = target
+				cc := inbound.NewSocket(target, conn, ctx.SHADOWSOCKS)
+				if IsSpecialFqdn(cc.Metadata().Host) {
+					server := mux.NewServer()
+					err = server.NewConnection(cc.Conn())
+					if err != nil {
+						log.Errorln("NewConnection: %v", err)
+					}
+				} else {
+					local, err := net.Dial("tcp", cc.Metadata().RemoteAddress())
+					if err != nil {
+						log.Debugln("tcp connect [%v] : %v", cc.Metadata().RemoteAddress(), err)
+						return
+					}
+
+					bufio.Relay(local, cc.Conn(), nil)
+				}
 			}()
 		}
+	}
+}
+
+func IsSpecialFqdn(fqdn string) bool {
+	switch fqdn {
+	case "sp.mux.sing-box.arpa", // mux
+		"v1.mux.cool": // mux
+		return true
+	default:
+		return false
 	}
 }

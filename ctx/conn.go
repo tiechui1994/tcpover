@@ -13,6 +13,7 @@ const (
 	HTTP Type = iota
 	HTTPCONNECT
 	SOCKS5
+	SHADOWSOCKS
 )
 
 type Type int
@@ -25,6 +26,8 @@ func (t Type) String() string {
 		return "HTTP Connect"
 	case SOCKS5:
 		return "Socks5"
+	case SHADOWSOCKS:
+		return "ShadowSocks"
 	default:
 		return "Unknown"
 	}
