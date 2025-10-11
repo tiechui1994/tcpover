@@ -1,6 +1,7 @@
 package tcpover
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,8 @@ import (
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/common/bufio"
 	"github.com/tiechui1994/tcpover/transport/mux"
+	"github.com/tiechui1994/tcpover/transport/shadowsocks/core"
+	"github.com/tiechui1994/tcpover/transport/socks5"
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
@@ -362,3 +365,38 @@ const (
 	CommandLink = 0x01
 	CommandPing = 0x02
 )
+
+func (s *Server) SSrServer(ctx context.Context, port uint16) error {
+	lister, err := net.Listen("tcp", ":8080")
+	if err != nil {
+		return err
+	}
+
+	cipher, err := core.PickCipher("CHACHA20-IETF-POLY1305", nil, "123456")
+	if err != nil {
+		return err
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			conn, err := lister.Accept()
+			if err != nil {
+				continue
+			}
+			go func() {
+				conn := cipher.StreamConn(conn)
+
+				target, err := socks5.ReadAddr0(conn)
+				if err != nil {
+					_ = conn.Close()
+					return
+				}
+
+				_ = target
+			}()
+		}
+	}
+}

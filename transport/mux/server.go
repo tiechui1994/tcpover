@@ -1,6 +1,8 @@
 package mux
 
 import (
+	"context"
+	"github.com/tiechui1994/tcpover/ctx"
 	"net"
 
 	"github.com/tiechui1994/tcpover/transport/common/bufio"
@@ -8,6 +10,10 @@ import (
 	"github.com/tiechui1994/tool/log"
 	"github.com/xtaci/smux"
 )
+
+type ServiceHandler interface {
+	NewConnection(ctx context.Context, conn net.Conn, meta *ctx.Metadata)
+}
 
 func NewServer() *Service {
 	return &Service{}
