@@ -367,8 +367,12 @@ const (
 	CommandPing = 0x02
 )
 
-func (s *Server) SS(c context.Context, port uint16, name, password string) error {
-	listen, err := net.Listen("tcp", fmt.Sprintf(":%v", port))
+func (s *Server) SS(ct context.Context, port uint16, name, password string) error {
+	var listenConfig = net.ListenConfig{
+		Control: Control,
+	}
+
+	listen, err := listenConfig.Listen(ct, "tcp", fmt.Sprintf(":%v", port))
 	if err != nil {
 		return err
 	}
@@ -380,7 +384,7 @@ func (s *Server) SS(c context.Context, port uint16, name, password string) error
 
 	for {
 		select {
-		case <-c.Done():
+		case <-ct.Done():
 			return nil
 		default:
 			conn, err := listen.Accept()
