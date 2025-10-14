@@ -233,16 +233,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.URL.Path == "/" {
-			closed := r.URL.Query().Get("close")
-			if closed != "" {
-				s.Version(w, r)
-				time.AfterFunc(5*time.Second, func() {
-					os.Exit(0)
-				})
-				return
-			}
-
 			s.Version(w, r)
+			return
+		}
+
+		closed := r.URL.Query().Get("close")
+		if closed != "" {
+			s.Version(w, r)
+			time.AfterFunc(5*time.Second, func() {
+				os.Exit(0)
+			})
 			return
 		}
 
