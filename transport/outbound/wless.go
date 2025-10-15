@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"regexp"
 	"sync"
@@ -217,7 +218,7 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string, header m
 
 	server := mux.NewServer()
 	err = server.NewConnection(conn)
-	if err != nil {
+	if err != nil && err != io.EOF {
 		log.Errorln("NewConnection: %v", err)
 	}
 	return err

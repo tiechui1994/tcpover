@@ -199,6 +199,10 @@ func IsClose(err error) bool {
 		return false
 	}
 
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+
 	if _, ok := err.(*websocket.CloseError); ok {
 		return websocket.IsCloseError(err, webSocketCloseCode...)
 	}

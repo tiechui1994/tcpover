@@ -189,7 +189,7 @@ func (s *Server) directConnectMux(r *http.Request, w http.ResponseWriter) {
 
 	server := mux.NewServer()
 	err = server.NewConnection(remote)
-	if err != nil {
+	if err != nil && err != io.EOF {
 		log.Errorln("NewConnection: %v", err)
 	}
 }
@@ -403,7 +403,7 @@ func (s *Server) SS(ct context.Context, port uint16, name, password string) erro
 				if IsSpecialFqdn(cc.Metadata().Host) {
 					server := mux.NewServer()
 					err = server.NewConnection(cc.Conn())
-					if err != nil {
+					if err != nil && err != io.EOF {
 						log.Errorln("NewConnection: %v", err)
 					}
 				} else {
