@@ -372,7 +372,7 @@ func (s *Server) SS(ct context.Context, port uint16, name, password string) erro
 		Control: Control,
 	}
 
-	listen, err := listenConfig.Listen(ct, "tcp", fmt.Sprintf(":%v", port))
+	listen, err := listenConfig.Listen(ct, "tcp", fmt.Sprintf("127.0.0.1:%v", port))
 	if err != nil {
 		return err
 	}
