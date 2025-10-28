@@ -65,14 +65,14 @@ func NewServer() *Server {
 	}
 }
 
-func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (remote net.Conn, addr string, err error) {
+func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (remote net.Conn, addr socks5.Addr, err error) {
 	var socket *websocket.Conn
 	socket, err = s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
 		if _, ok := err.(websocket.HandshakeError); !ok {
 			http.Error(w, fmt.Sprintf("upgrade error: %v", err), http.StatusInternalServerError)
 		}
-		return nil, "", fmt.Errorf("upgrade error: %w", err)
+		return nil, nil, fmt.Errorf("upgrade error: %w", err)
 	}
 
 	remote = wss.NewWebsocketConn(socket)
@@ -91,10 +91,10 @@ func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (
 	log.Debugln("proto %v", proto)
 	switch proto {
 	case ctx.Vless:
-		_, _, addr, err = vless.ReadConnFirstPacket(remote)
+		addr, err = vless.ReadAddr(remote)
 		return remote, addr, err
 	default:
-		addr, err = wless.ReadConnFirstPacket(remote)
+		addr, err = wless.ReadAddr(remote)
 		return remote, addr, err
 	}
 }
@@ -170,7 +170,8 @@ func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
 	}
 	defer remote.Close()
 
-	local, err := net.Dial("tcp", addr)
+	cc := inbound.NewSocket(addr, remote, ctx.SHADOWSOCKS)
+	local, err := net.Dial("tcp", cc.Metadata().RemoteAddress())
 	if err != nil {
 		log.Debugln("tcp connect [%v] : %v", addr, err)
 		return
@@ -427,5 +428,52 @@ func IsSpecialFqdn(fqdn string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func (s *Server) TCPVless(ct context.Context, port uint16) error {
+	var listenConfig = net.ListenConfig{
+		Control: Control,
+	}
+
+	listen, err := listenConfig.Listen(ct, "tcp", fmt.Sprintf("127.0.0.1:%v", port))
+	if err != nil {
+		return err
+	}
+
+	for {
+		select {
+		case <-ct.Done():
+			return nil
+		default:
+			conn, err := listen.Accept()
+			if err != nil {
+				continue
+			}
+			go func() {
+				addr, err := vless.ReadAddr(conn)
+				if err != nil {
+					_ = conn.Close()
+					return
+				}
+
+				cc := inbound.NewSocket(addr, conn, ctx.SHADOWSOCKS)
+				if IsSpecialFqdn(cc.Metadata().Host) {
+					server := mux.NewServer()
+					err = server.NewConnection(cc.Conn())
+					if err != nil && err != io.EOF {
+						log.Errorln("NewConnection: %v", err)
+					}
+				} else {
+					local, err := net.Dial("tcp", cc.Metadata().RemoteAddress())
+					if err != nil {
+						log.Debugln("tcp connect [%v] : %v", cc.Metadata().RemoteAddress(), err)
+						return
+					}
+
+					bufio.Relay(local, cc.Conn(), nil)
+				}
+			}()
+		}
 	}
 }

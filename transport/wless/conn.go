@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"strconv"
+
+	"github.com/tiechui1994/tcpover/transport/socks5"
 )
 
 type Conn struct {
@@ -39,20 +42,34 @@ func newConn(conn net.Conn, dst string) (*Conn, error) {
 	return c, nil
 }
 
-
-func ReadConnFirstPacket(conn net.Conn) (addr string, err error) {
-	buf := make([]byte, 1)
-	_, err = io.ReadFull(conn, buf)
+func ReadAddr(conn net.Conn) (addr socks5.Addr, err error) {
+	// length(1) + N
+	var length byte
+	length, err = socks5.ReadByte(conn)
 	if err != nil {
-		return addr, err
+		return nil, err
 	}
 
-	buf = make([]byte, int(buf[0]))
+	buf := make([]byte, int(length))
 	_, err = io.ReadFull(conn, buf)
 	if err != nil {
-		return addr, err
+		return nil, err
+	}
+	host, p, err := net.SplitHostPort(string(buf))
+	if err != nil {
+		return nil, err
+	}
+	port, err := strconv.Atoi(p)
+	if err != nil {
+		return nil, err
 	}
 
-	addr = string(buf)
-	return  addr, nil
+	b := make([]byte, 1+1+len(host)+2)
+	b[0] = socks5.AtypDomainName
+	b[1] = byte(len(host))
+	copy(b[2:2+len(host)], host)
+	b[2+len(host)] = uint8(port >> 8)
+	b[2+len(host)+1] = uint8(port)
+
+	return b, nil
 }

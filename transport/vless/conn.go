@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 
-	"github.com/tiechui1994/tool/log"
+	"github.com/tiechui1994/tcpover/transport/socks5"
 )
 
 type Conn struct {
@@ -93,64 +92,69 @@ func newConn(conn net.Conn, client *Client, dst *DstAddr) (*Conn, error) {
 	return c, nil
 }
 
-func ReadConnFirstPacket(conn net.Conn) (id string, command int, addr string, err error) {
-	// version(1) id(16) addon(1) command(1) port(2) addrType(1)
+func ReadAddr(conn net.Conn) (socks5.Addr, error) {
+	var err error
+	// version(1) id(16) addon(1) command(1)
 	buf := make([]byte, 1+16+1+1)
 	_, err = io.ReadFull(conn, buf)
 	if err != nil {
-		return id, command, addr, err
+		return nil, err
 	}
 
-	id = string(buf[1:17])
-	command = int(buf[18])
-
-	switch byte(command) {
-	case CommandTCP, CommandUDP:
-		buf = make([]byte, 2+1)
-		_, err = io.ReadFull(conn, buf)
-		if err != nil {
-			return id, command, addr, err
-		}
-
-		port := binary.BigEndian.Uint16(buf[0:2])
-		switch buf[len(buf)-1] {
-		case AtypIPv4:
-			buf = make([]byte, 4)
-			_, err = io.ReadFull(conn, buf)
-			if err != nil {
-				return id, command, addr, err
-			}
-			addr = net.JoinHostPort(net.IP(buf[0:4]).String(), fmt.Sprintf("%d", binary.BigEndian.Uint16(buf[4:6])))
-		case AtypIPv6:
-			buf = make([]byte, 16)
-			_, err = io.ReadFull(conn, buf)
-			if err != nil {
-				return id, command, addr, err
-			}
-			addr = net.JoinHostPort(net.IP(buf[0:16]).String(), fmt.Sprintf("%d", binary.BigEndian.Uint16(buf[16:18])))
-		case AtypDomainName:
-			buf = make([]byte, 1)
-			_, err = io.ReadFull(conn, buf) // 1 => 23
-			if err != nil {
-				return id, command, addr, err
-			}
-			buf = make([]byte, int(buf[0]))
-			_, err = io.ReadFull(conn, buf)
-			if err != nil {
-				return id, command, addr, err
-			}
-			addr = net.JoinHostPort(string(buf), fmt.Sprintf("%v", port))
-		}
-
-		log.Debugln("read addr: %v", addr)
-
-		// reply vless response
-		buf = make([]byte, 1+1)
-		_, err = conn.Write(buf)
-		if err != nil {
-			return id, command, addr, err
-		}
+	// port(2) addrType(1)
+	buf = make([]byte, 2+1)
+	_, err = io.ReadFull(conn, buf)
+	if err != nil {
+		return nil, err
 	}
 
-	return id, command, addr, nil
+	var addr []byte
+	port := buf[0:2]
+	switch buf[2] {
+	case AtypDomainName:
+		var domainLength byte
+		domainLength, err = socks5.ReadByte(conn) // read 2nd byte for domain length
+		if err != nil {
+			return nil, err
+		}
+		b := make([]byte, 1+1+uint16(domainLength)+2)
+		b[0] = socks5.AtypDomainName
+		b[1] = domainLength
+		_, err = io.ReadFull(conn, b[2:2+domainLength])
+		if err != nil {
+			return nil, err
+		}
+		copy(b[2+domainLength:], port)
+		addr = b
+	case AtypIPv4:
+		var b [1 + net.IPv4len + 2]byte
+		b[0] = socks5.AtypIPv4
+		_, err = io.ReadFull(conn, b[1:1+net.IPv4len])
+		if err != nil {
+			return nil, err
+		}
+		copy(b[1+net.IPv4len:], port)
+		addr = b[:]
+	case AtypIPv6:
+		var b [1 + net.IPv6len + 2]byte
+		b[0] = socks5.AtypIPv6
+		_, err = io.ReadFull(conn, b[1:1+net.IPv6len])
+		copy(b[1+net.IPv6len:], port)
+		if err != nil {
+			return nil, err
+		}
+		copy(b[1+net.IPv6len:], port)
+		addr = b[:]
+	default:
+		return nil, socks5.ErrAddressNotSupported
+	}
+
+	// reply vless response
+	buf = make([]byte, 1+1)
+	_, err = conn.Write(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	return addr, nil
 }

@@ -12,7 +12,9 @@ import (
 
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/common/bufio"
+	"github.com/tiechui1994/tcpover/transport/inbound"
 	"github.com/tiechui1994/tcpover/transport/mux"
+	"github.com/tiechui1994/tcpover/transport/socks5"
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
@@ -170,12 +172,12 @@ func (c *PassiveResponder) connectLocal(code, network, proto string, header map[
 		conn.Close()
 	}()
 
-	var addr string
+	var addr socks5.Addr
 	switch proto {
 	case ctx.Vless:
-		_, _, addr, err = vless.ReadConnFirstPacket(conn)
+		addr, err = vless.ReadAddr(conn)
 	default:
-		addr, err = wless.ReadConnFirstPacket(conn)
+		addr, err = wless.ReadAddr(conn)
 	}
 	if err != nil {
 		return err
@@ -183,7 +185,8 @@ func (c *PassiveResponder) connectLocal(code, network, proto string, header map[
 
 	// link
 	remote := conn
-	local, err := net.Dial(network, addr)
+	cc := inbound.NewSocket(addr, remote, ctx.SHADOWSOCKS)
+	local, err := net.Dial(network, cc.Metadata().RemoteAddress())
 	if err != nil {
 		return err
 	}
@@ -208,9 +211,9 @@ func (c *PassiveResponder) connectLocalMux(code, network, proto string, header m
 
 	switch proto {
 	case ctx.Vless:
-		_, _, _, err = vless.ReadConnFirstPacket(conn)
+		_, err = vless.ReadAddr(conn)
 	default:
-		_, err = wless.ReadConnFirstPacket(conn)
+		_, err = wless.ReadAddr(conn)
 	}
 	if err != nil {
 		return err
