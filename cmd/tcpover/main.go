@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/tiechui1994/tcpover"
 	"github.com/tiechui1994/tcpover/config"
 	"github.com/tiechui1994/tcpover/ctx"
@@ -115,10 +114,6 @@ func main() {
 	}
 
 	if *runAsConnector {
-		logrus.SetFormatter(&logrus.TextFormatter{
-			DisableTimestamp: true,
-			DisableQuote:     true,
-		})
 		if *cloudflare || *gcore {
 			var cname []string
 			if *cloudflare {
@@ -145,7 +140,7 @@ func main() {
 			wss.DialProxy = func(ctx context.Context, network, addr string) (net.Conn, error) {
 				_, port, _ := net.SplitHostPort(addr)
 				domain := net.JoinHostPort(cname[int(time.Now().UnixMicro())%len(cname)], port)
-				log.Infoln("Dial [%v] => %v", addr, domain)
+				log.Infoln("proxy dial [%v] => %v", net.JoinHostPort(addr, port), domain)
 				retry := true
 			retry:
 				conn, err := dialer.Dial(network, addr)
@@ -211,9 +206,6 @@ func main() {
 			proxying["uuid"] = time.Now().String()
 		}
 
-		if *mux {
-			proxying["mode"] = wss.ModeDirectMux
-		}
 		var proxies []map[string]interface{}
 		proxies = append(proxies, proxying)
 

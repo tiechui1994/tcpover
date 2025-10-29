@@ -172,7 +172,7 @@ func connect(ctx context.Context, optionMode wss.Mode, optionServer, remoteName 
 }
 
 func (c *directConnDispatcher) DialContext(ctx context.Context, metadata *ctx.Metadata) (net.Conn, error) {
-	log.Debugln("dispatcher: %v => %v", metadata.SourceAddress(), metadata.RemoteAddress())
+	log.Debugln("dispatcher from %v => %v", metadata.SourceAddress(), metadata.RemoteAddress())
 	return c.createConn(ctx, metadata)
 }
 

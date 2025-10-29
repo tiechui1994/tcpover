@@ -99,7 +99,7 @@ func (s *Server) getConnectConnAndAddr(r *http.Request, w http.ResponseWriter) (
 	}
 }
 
-func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Request, w http.ResponseWriter) {
+func (s *Server) forwardConnect(remoteName, code string, mode wss.Mode, r *http.Request, w http.ResponseWriter) {
 	socket, err := s.upgrade.Upgrade(w, r, s.defaultHeader)
 	if err != nil {
 		if _, ok := err.(websocket.HandshakeError); !ok {
@@ -111,11 +111,16 @@ func (s *Server) forwardConnect(name, code string, mode wss.Mode, r *http.Reques
 	conn := wss.NewWebsocketConn(socket)
 	defer conn.Close()
 
+	if code == "" && remoteName == "" {
+		log.Errorln("code and name is empty")
+		return
+	}
+
 	// active connection
-	if name != "" {
-		manage, ok := s.manageConn.Load(name)
+	if remoteName != "" {
+		manage, ok := s.manageConn.Load(remoteName)
 		if !ok {
-			log.Errorln("agent [%v] not running", name)
+			log.Errorln("agent [%v] not running", remoteName)
 			return
 		}
 
@@ -171,27 +176,20 @@ func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
 	defer remote.Close()
 
 	cc := inbound.NewSocket(addr, remote, ctx.SHADOWSOCKS)
-	local, err := net.Dial("tcp", cc.Metadata().RemoteAddress())
-	if err != nil {
-		log.Debugln("tcp connect [%v] : %v", addr, err)
-		return
-	}
+	if mux.IsSpecialFqdn(cc.Metadata().Host) {
+		server := mux.NewServer()
+		err = server.NewConnection(remote)
+		if err != nil && err != io.EOF {
+			log.Errorln("NewConnection: %v", err)
+		}
+	} else {
+		local, err := net.Dial("tcp", cc.Metadata().RemoteAddress())
+		if err != nil {
+			log.Debugln("tcp connect [%v] : %v", addr, err)
+			return
+		}
 
-	bufio.Relay(local, remote, nil)
-}
-
-func (s *Server) directConnectMux(r *http.Request, w http.ResponseWriter) {
-	remote, _, err := s.getConnectConnAndAddr(r, w)
-	if err != nil {
-		log.Errorln("%v", err)
-		return
-	}
-	defer remote.Close()
-
-	server := mux.NewServer()
-	err = server.NewConnection(remote)
-	if err != nil && err != io.EOF {
-		log.Errorln("NewConnection: %v", err)
+		bufio.Relay(local, remote, nil)
 	}
 }
 
@@ -263,18 +261,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	role := r.URL.Query().Get("rule")
 	mode := wss.Mode(r.URL.Query().Get("mode"))
 
-	log.Debugln("enter connections:%v, code:%v, name:%v, role:%v, mode:%v", atomic.AddInt32(&s.conn, +1), code, name, role, mode)
+	uuid := time.Now().Format("2006.0102.150405.9999")
+	atomic.AddInt32(&s.conn, +1)
+	log.Debugln("enter:%v, code:%v, name:%v, role:%v, mode:%v", uuid, code, name, role, mode)
 	defer func() {
-		log.Debugln("leave connections:%v  code:%v, name:%v, role:%v, mode:%v", atomic.AddInt32(&s.conn, -1), code, name, role, mode)
+		atomic.AddInt32(&s.conn, -1)
+		log.Debugln("leave:%v  code:%v, name:%v, role:%v, mode:%v", uuid, code, name, role, mode)
 	}()
 
 	// 情况1: 直接连接
 	if (role == wss.RoleAgent || role == wss.RoleConnector) && mode.IsDirect() {
-		if mode.IsMux() {
-			s.directConnectMux(r, w)
-		} else {
-			s.directConnect(r, w)
-		}
+		s.directConnect(r, w)
 		return
 	}
 
@@ -401,7 +398,7 @@ func (s *Server) SS(ct context.Context, port uint16, name, password string) erro
 				}
 
 				cc := inbound.NewSocket(target, conn, ctx.SHADOWSOCKS)
-				if IsSpecialFqdn(cc.Metadata().Host) {
+				if mux.IsSpecialFqdn(cc.Metadata().Host) {
 					server := mux.NewServer()
 					err = server.NewConnection(cc.Conn())
 					if err != nil && err != io.EOF {
@@ -418,16 +415,6 @@ func (s *Server) SS(ct context.Context, port uint16, name, password string) erro
 				}
 			}()
 		}
-	}
-}
-
-func IsSpecialFqdn(fqdn string) bool {
-	switch fqdn {
-	case "sp.mux.sing-box.arpa", // mux
-		"v1.mux.cool": // mux
-		return true
-	default:
-		return false
 	}
 }
 
@@ -458,7 +445,7 @@ func (s *Server) TCPVless(ct context.Context, port uint16) error {
 				}
 
 				cc := inbound.NewSocket(addr, conn, ctx.SHADOWSOCKS)
-				if IsSpecialFqdn(cc.Metadata().Host) {
+				if mux.IsSpecialFqdn(cc.Metadata().Host) {
 					server := mux.NewServer()
 					err = server.NewConnection(cc.Conn())
 					if err != nil && err != io.EOF {

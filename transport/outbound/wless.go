@@ -144,11 +144,8 @@ try:
 					code := cmd.Data["Code"].(string)
 					network := cmd.Data["Network"].(string)
 					proto := cmd.Data["Proto"].(string)
-					if v := cmd.Data["Mux"]; v.(bool) {
-						err = c.connectLocalMux(code, network, proto, header)
-					} else {
-						err = c.connectLocal(code, network, proto, header)
-					}
+					isMux, _ := cmd.Data["Mux"].(bool)
+					err = c.connectLocal(code, network, proto, header, isMux)
 					if err != nil {
 						log.Errorln("ConnectLocal:", err)
 					}
@@ -158,19 +155,21 @@ try:
 	}()
 }
 
-func (c *PassiveResponder) connectLocal(code, network, proto string, header map[string]string) error {
+func (c *PassiveResponder) connectLocal(code, network, proto string, header map[string]string, isMux bool) error {
+	var mode = wss.ModeForward
+	if isMux {
+		mode = wss.ModeForwardMux
+	}
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Code:   code,
 		Role:   wss.RoleAgent,
-		Mode:   wss.ModeForward,
+		Mode:   mode,
 		Header: wss.Header(proto, header),
 	})
 	if err != nil {
 		return err
 	}
-	defer func() {
-		conn.Close()
-	}()
+	defer conn.Close()
 
 	var addr socks5.Addr
 	switch proto {
@@ -183,46 +182,23 @@ func (c *PassiveResponder) connectLocal(code, network, proto string, header map[
 		return err
 	}
 
-	// link
-	remote := conn
-	cc := inbound.NewSocket(addr, remote, ctx.SHADOWSOCKS)
-	local, err := net.Dial(network, cc.Metadata().RemoteAddress())
-	if err != nil {
-		return err
+	cc := inbound.NewSocket(addr, conn, ctx.SHADOWSOCKS)
+	if mux.IsSpecialFqdn(cc.Metadata().Host) {
+		server := mux.NewServer()
+		err = server.NewConnection(conn)
+		if err != nil && err != io.EOF {
+			log.Errorln("NewConnection: %v", err)
+		}
+	} else {
+		// link
+		remote := conn
+		local, err := net.Dial(network, cc.Metadata().RemoteAddress())
+		if err != nil {
+			return err
+		}
+
+		bufio.Relay(local, remote, nil)
 	}
 
-	bufio.Relay(local, remote, nil)
 	return nil
-}
-
-func (c *PassiveResponder) connectLocalMux(code, network, proto string, header map[string]string) error {
-	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
-		Code:   code,
-		Role:   wss.RoleAgent,
-		Mode:   wss.ModeForwardMux,
-		Header: wss.Header(proto, header),
-	})
-	if err != nil {
-		return err
-	}
-	defer func() {
-		conn.Close()
-	}()
-
-	switch proto {
-	case ctx.Vless:
-		_, err = vless.ReadAddr(conn)
-	default:
-		_, err = wless.ReadAddr(conn)
-	}
-	if err != nil {
-		return err
-	}
-
-	server := mux.NewServer()
-	err = server.NewConnection(conn)
-	if err != nil && err != io.EOF {
-		log.Errorln("NewConnection: %v", err)
-	}
-	return err
 }

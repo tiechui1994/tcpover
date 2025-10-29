@@ -76,7 +76,7 @@ var (
 					return conn, nil
 				}
 			}
-			log.Debugln("DialContext [%v]: %v", addr, addr)
+			log.Debugln("dial remote addr [%v]", addr)
 			return (&net.Dialer{}).DialContext(context.Background(), network, addr)
 		},
 		HandshakeTimeout: 45 * time.Second,

@@ -58,7 +58,7 @@ func (s *Service) NewConnection(conn net.Conn) error {
 			continue
 		}
 
-		log.Debugln("server dial connect addr: %v", request.Destination)
+		log.Debugln("mux dial connect: %v", request.Destination)
 		local, err := net.Dial(request.Network, request.Destination)
 		if err != nil {
 			log.Errorln("net dial: %v", err)

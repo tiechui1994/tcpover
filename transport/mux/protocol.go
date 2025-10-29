@@ -209,3 +209,13 @@ func ReadStreamResponse(reader io.Reader) (*StreamResponse, error) {
 	response.Status = status
 	return &response, nil
 }
+
+func IsSpecialFqdn(fqdn string) bool {
+	switch fqdn {
+	case "sp.mux.sing-box.arpa", // mux
+		"v1.mux.cool": // mux
+		return true
+	default:
+		return false
+	}
+}
