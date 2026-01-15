@@ -88,37 +88,57 @@ class WebSocketStream {
 }
 
 class Buffer {
-    private end = 0;
-    private readonly data: Uint8Array;
+    private data: Uint8Array;
+    private size: number = 0;
 
-    constructor(size = 8192) {
-        this.data = new Uint8Array(size);
+    constructor(initialCapacity = 256) {
+        this.data = new Uint8Array(initialCapacity);
     }
 
-    write(data: Uint8Array, length: number) {
-        this.data.set(data.subarray(0, length), this.end);
-        this.end += length;
+    write(chunk: Uint8Array) {
+        const needed = this.size + chunk.byteLength;
+        if (needed > this.data.byteLength) {
+            this.grow(needed);
+        }
+        // 使用高效的底层内存拷贝
+        this.data.set(chunk, this.size);
+        this.size += chunk.byteLength;
     }
 
-    // 返回当前的视图，不产生内存拷贝
-    bytes() {
-        return this.data.subarray(0, this.end);
+    private grow(minCapacity: number) {
+        info(`size to: ${this.data.byteLength * 2}`)
+        let newCapacity = this.data.byteLength * 2;
+        if (newCapacity < minCapacity) newCapacity = minCapacity;
+
+        const newData = new Uint8Array(newCapacity);
+        newData.set(this.data); // 拷贝原有数据
+        this.data = newData;
     }
 
-    at(index: number) {
-        return this.data[index];
+    bytes(): Uint8Array {
+        return this.data.subarray(0, this.size);
+    }
+
+    consume(n: number) {
+        if (n >= this.size) {
+            this.size = 0;
+            return;
+        }
+        // 将剩余数据移到开头
+        this.data.copyWithin(0, n, this.size);
+        this.size -= n;
     }
 
     subarray(start: number, end?: number) {
-        return this.data.subarray(start, end ?? this.end);
+        return this.data.subarray(start, end ?? this.size);
     }
-
-    length() {
-        return this.end;
-    }
-
-    reset() {
-        this.end = 0;
+    at(index: number) { return this.data[index]; }
+    length() { return this.size; }
+    reset() { this.size = 0; }
+    release() {
+        this.size = 0
+        this.data = null;
+        info(`release`)
     }
 }
 
@@ -126,6 +146,8 @@ const SYN = 0x00
 const FIN = 0x01
 const PSH = 0x02
 const NOP = 0x03
+const vlessHeaderLen = 1 + 16 + 1 + 1 + 2 + 1
+const muxHeaderLen = 8
 
 class MuxSocketStream {
     private stream: WebSocketStream
@@ -156,7 +178,7 @@ class MuxSocketStream {
                 view.setUint8(0,1)
                 view.setUint8(1, FIN)
                 view.setUint16(2, 0,true)
-                view.setUint32(4,id,true)
+                view.setUint32(4, id,true)
                 socket.send(view.buffer)
                 delete this.sessions[id];
             }
@@ -178,8 +200,7 @@ class MuxSocketStream {
         // SYNC Header
         // flags(2) + type(1) + addr(4+2, 16+2, 1+2+N)
 
-        const vlessHeaderLen = 1 + 16 + 1 + 1 + 2 + 1
-        const muxHeaderLen = 8
+
         const firstBuffer = new Buffer()
         let readRequest = true
         let remainChunk
@@ -190,7 +211,7 @@ class MuxSocketStream {
             // @ts-ignore
             async write(chunk, controller) {
                 if (readRequest) {
-                    firstBuffer.write(chunk, chunk.byteLength)
+                    firstBuffer.write(chunk)
                     // 1) vless request
                     if (firstBuffer.length() < vlessHeaderLen) return
 
@@ -204,11 +225,13 @@ class MuxSocketStream {
                     if (firstBuffer.length() < realLen + 2) return
 
                     realLen  += 2
-
                     socket.send(new Uint8Array(2))
                     readRequest = false
                     chunk = firstBuffer.subarray(realLen)
-                    if (chunk.byteLength === 0) return
+                    if (chunk.byteLength === 0) {
+                        firstBuffer.release()
+                        return
+                    }
                 }
 
                 if (remainChunk && remainChunk.byteLength > 0) {
@@ -297,7 +320,7 @@ class MuxSocketStream {
             // 分段发送，避免单个包过大
             let index = 0;
             while (index < chunk.byteLength) {
-                const size = Math.min(chunk.byteLength - index, 2048);
+                const size = Math.min(chunk.byteLength - index, 4096);
                 view.setUint8(0, 1);
                 view.setUint8(1, PSH); // PSH
                 view.setUint16(2, size, true);
@@ -462,7 +485,7 @@ app.get("/api/ssh", async (c) => {
     const rule = c.req.query("rule") || ""
     const mode = c.req.query("mode") || ""
 
-    console.log(`name: ${name}, rule: ${rule}, mode: ${mode}`)
+    info(`name: ${name}, rule: ${rule}, mode: ${mode}`)
 
     // direct connect
     if ([ruleConnector, ruleAgent].includes(rule) && [modeDirect, modeDirectMux].includes(mode)) {
