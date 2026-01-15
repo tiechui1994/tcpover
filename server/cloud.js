@@ -16,46 +16,70 @@ class EmendWebsocket {
     }
 }
 
+const debug = false
+const warn = (...data) => {
+    if (debug) console.warn(data)
+}
+const error = (...data) => {
+    if (debug) console.error(data)
+}
+const info =  (...data) => {
+    if (debug) console.info(data)
+}
+
 class Buffer {
-    constructor() {
-        this.start = 0
-        this.end = 0
-        this.data = new Uint8Array(8192)
+    constructor(initialCapacity = 256) {
+        this.data = new Uint8Array(initialCapacity);
     }
 
-    write(data, length) {
-        for (let i = 0; i < length; i++) {
-            this.data[this.end] = data[i]
-            this.end++
+    /**
+     * @param {chunk} chunk 
+     */
+    write(chunk) {
+        const needed = this.size + chunk.byteLength;
+        if (needed > this.data.byteLength) {
+            this.grow(needed);
         }
+        // 使用高效的底层内存拷贝
+        this.data.set(chunk, this.size);
+        this.size += chunk.byteLength;
     }
 
+    grow(minCapacity) {
+        info(`size to: ${this.data.byteLength * 2}`)
+        let newCapacity = this.data.byteLength * 2;
+        if (newCapacity < minCapacity) newCapacity = minCapacity;
+
+        const newData = new Uint8Array(newCapacity);
+        newData.set(this.data); // 拷贝原有数据
+        this.data = newData;
+    }
+
+    /**
+     * @return Uint8Array
+     */
     bytes() {
-        if (arguments.length > 0) {
-            return this.data.slice(this.start, this.end)
-        }
-        return this.data.slice(this.start, this.end)
+        return this.data.subarray(0, this.size);
     }
 
-    at(index) {
-        return this.data[index]
+    /**
+     * @param {number} start 
+     * @param {number} end 
+     * @return Uint8Array
+     */
+    subarray(start, end) {
+        return this.data.subarray(start, end ?? this.size);
     }
-
-    slice(start, end) {
-        if (end && end > 0) {
-            return this.data.slice(start, end)
-        }
-
-        return this.data.slice(start, this.end)
-    }
-
-    length() {
-        return this.end - this.start
-    }
-
-    reset() {
-        this.start = 0
-        this.end = 0
+    /**
+     * @param {number} index
+     */
+    at(index) { return this.data[index]; }
+    length() { return this.size; }
+    reset() { this.size = 0; }
+    release() {
+        this.size = 0
+        this.data = null;
+        info(`release`)
     }
 }
 
@@ -68,12 +92,8 @@ class WebSocketStream {
                     controller.enqueue(new Uint8Array(event.data));
                 };
                 socket.socket.onerror = (e) => {
-                    console.warn("<readable onerror>", e.message)
+                    warn("<readable onerror>", e.message)
                     controller.error(e)
-                }
-                socket.socket.onclose = () => {
-                    console.warn("<readable onclose>:", socket.attrs)
-                    controller.close()
                 }
             },
             pull(controller) {
@@ -85,11 +105,8 @@ class WebSocketStream {
         this.writable = new WritableStream({
             start(controller) {
                 socket.socket.onerror = (e) => {
-                    console.warn("<writable onerror>:", e.message)
+                    warn("<writable onerror>:", e.message)
                 }
-                socket.socket.onclose = () => {
-                    console.warn("<writable onclose>:" + socket.attrs)
-                };
             },
             write(chunk, controller) {
                 socket.send(chunk);
@@ -104,27 +121,120 @@ class WebSocketStream {
     }
 }
 
+const SYN = 0x00
+const FIN = 0x01
+const PSH = 0x02
+const NOP = 0x03
+const vlessHeaderLen = 1 + 16 + 1 + 1 + 2 + 1
+const muxHeaderLen = 8
+
+const decoder = new TextDecoder()
+
 class MuxSocketStream {
     constructor(stream) {
         this.stream = stream;
         this.sessions = {}
         this.run().catch((err) => {
-            console.warn("run::catch", err.stack)
+            warn("run::catch", err.stack)
             this.stream.socket.close(1000)
         })
     }
 
     async run() {
-        const SYN = 0x00
-        const FIN = 0x01
-        const PSH = 0x02
-        const NOP = 0x03
-
-        const Mask = 255
-
         const socket = this.stream.socket
         const sessions = this.sessions
-        const merge = this.merge
+        /**
+         * @param {Uint8Array} a 
+         * @param {Uint8Array} b 
+         * @returns {Uint8Array}
+         */
+        const merge = (a, b) => {
+            const res = new Uint8Array(a.byteLength + b.byteLength);
+            res.set(a, 0);
+            res.set(b, a.byteLength);
+            return res;
+        }
+        /**
+         * @param {Uint8Array} chunk 
+         * @param {DataView} view 
+         * @returns 
+         */
+        const parseMuxAddress = (chunk, view) => {
+            let hostname = "", port = 0, offset = 0;
+            const type = chunk[2];
+            if (type === 1) { // IPv4
+                hostname = chunk.subarray(3, 3+4).join(".");
+                port = view.getUint16(3+4, false); // 大端
+                offset = 9;
+            } else if (type === 3) { // Domain
+                const len = chunk[3];
+                hostname = decoder.decode(chunk.subarray(4, 4 + len));
+                port = view.getUint16(4 + len, false);
+                offset = 4+2 + len;
+            } else if (type == 2) {
+                hostname = chunk.subarray(3, 3+16).join(".");
+                port = view.getUint16(3+16, false); // 大端
+                offset = 21;
+            }
+            return { hostname, port, offset };
+        }
+
+        /**
+         * @param {any} conn 
+         * @param {number} id 
+         * @param {EmendWebsocket} socket 
+         */
+        const handleRemoteToLocal = async(conn, id, socket) => {
+            const headerBuf = new Uint8Array(8);
+            const view = new DataView(headerBuf.buffer);
+            let first = true;
+
+            for await (const raw of conn.readable) {
+                let chunk = raw;
+                // 响应首包特殊处理 (根据原逻辑补 0)
+                if (first) {
+                    const tmp = new Uint8Array(raw.byteLength + 1);
+                    tmp.set(raw, 1);
+                    chunk = tmp;
+                    first = false;
+                }
+
+                // 分段发送，避免单个包过大
+                let index = 0;
+                while (index < chunk.byteLength) {
+                    const size = Math.min(chunk.byteLength - index, 4096);
+                    view.setUint8(0, 1);
+                    view.setUint8(1, PSH); // PSH
+                    view.setUint16(2, size, true);
+                    view.setUint32(4, id, true);
+
+                    socket.send(headerBuf)
+                    socket.send(chunk.subarray(index, index + size));
+                    //const fullPacket = new Uint8Array(8 + size);
+                    //fullPacket.set(headerBuf, 0);
+                    //fullPacket.set(chunk.subarray(index, index + size), 8);
+                    //socket.send(fullPacket);
+                    index += size;
+                }
+            }
+        }
+        /**
+         * @param {number} id 
+         */
+        const closeSession = (id) => {
+            const session = sessions[id];
+            if (session) {
+                const headerBuf = new Uint8Array(8);
+                const view = new DataView(headerBuf.buffer);
+                view.setUint8(0,1)
+                view.setUint8(1, FIN)
+                view.setUint16(2, 0,true)
+                view.setUint32(4, id,true)
+                socket.send(view.buffer)
+                delete this.sessions[id];
+            }
+        }
+
 
         // mux:
         // 1) vless request
@@ -142,70 +252,49 @@ class MuxSocketStream {
         // SYNC Header
         // flags(2) + type(1) + addr(4+2, 16+2, 1+2+N)
 
-        const vlessHeaderLen = 1 + 16 + 1 + 1 + 2 + 1
-        const muxHeaderLen = 8
         const firstBuffer = new Buffer()
         let readRequest = true
-        let remainChunk
+        let remainChunk = null
 
         const writableStream = new WritableStream({
             start(controller) {
             },
             async write(chunk, controller) {
                 if (readRequest) {
-                    firstBuffer.write(chunk, chunk.byteLength)
+                    firstBuffer.write(chunk)
                     // 1) vless request
-                    if (firstBuffer.length() < vlessHeaderLen) {
-                        return
-                    }
-                    let firstPacketRealLength = vlessHeaderLen
+                    if (firstBuffer.length() < vlessHeaderLen) return
+
+                    let realLen = vlessHeaderLen
                     const addrType = firstBuffer.at(vlessHeaderLen - 1)
-                    switch (addrType) {
-                        case 1:
-                            if (firstBuffer.length() < vlessHeaderLen + 4) {
-                                return
-                            }
-                            firstPacketRealLength = vlessHeaderLen + 4
-                            break
-                        case 3:
-                            if (firstBuffer.length() < vlessHeaderLen + 16) {
-                                return
-                            }
-                            firstPacketRealLength = vlessHeaderLen + 16
-                            break
-                        case 2:
-                            const domainLength = firstBuffer.at(vlessHeaderLen)
-                            if (firstBuffer.length() === vlessHeaderLen + domainLength) {
-                                return
-                            }
-                            firstPacketRealLength = vlessHeaderLen + 1 + domainLength
-                            break
-                    }
-                    socket.send(new Uint8Array(2))
-                    console.info("send first request")
+                    if (addrType == 1) realLen+=4;
+                    else if (addrType==3) realLen+=16;
+                    else if (addrType==2) realLen += 1 + firstBuffer.at(vlessHeaderLen);
 
                     // 2) mux version info, 2 bytes
-                    if (firstBuffer.length() < firstPacketRealLength + 2) {
-                        return
-                    }
+                    if (firstBuffer.length() < realLen + 2) return
 
-                    firstPacketRealLength = firstPacketRealLength + 2
+                    socket.send(new Uint8Array(2))
+
+                    realLen  += 2
                     readRequest = false
-                    chunk = firstBuffer.slice(firstPacketRealLength)
+                    chunk = firstBuffer.subarray(realLen)
                     if (chunk.byteLength === 0) {
+                        firstBuffer.release()
                         return
                     }
                 }
 
                 if (remainChunk && remainChunk.byteLength > 0) {
-                    chunk = merge(remainChunk, chunk.slice(muxHeaderLen))
+                    chunk = merge(remainChunk, chunk.subarray(muxHeaderLen))
                     remainChunk = null
                 }
 
                 // 3) mux header
-                const sessionID = chunk[7] << 24 | chunk[6] << 16 | chunk[5] << 8 | chunk[4]
-                const length = chunk[3] << 8 | chunk[2]
-                const command = chunk[1]
+                const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+                const sessionID = view.getUint32(4,true) // 4, 5, 6, 7
+                const length = view.getUint16(2, true) // 2, 3
+                const command = view.getUint8(1) // 1
 
                 if (command === SYN) {
                     if (chunk.byteLength <= muxHeaderLen + vlessHeaderLen) {
@@ -213,110 +302,41 @@ class MuxSocketStream {
                         return
                     }
 
-                    chunk = chunk.slice(muxHeaderLen)
-                    let hostname, port
-                    switch (chunk[2]) {
-                        case 1:
-                            hostname = chunk.slice(3, 3 + 4).join(".")
-                            port = chunk[3 + 4 + 1] | chunk[3 + 4] << 8
-                            chunk = chunk.slice(3 + 4 + 2)
-                            break
-                        case 4:
-                            hostname = chunk.slice(3, 3 + 16).join(":")
-                            port = chunk[3 + 16 + 1] | chunk[3 + 16] << 8
-                            chunk = chunk.slice(3 + 16 + 2)
-                            break
-                        case 3:
-                            const length = chunk[3]
-                            hostname = new TextDecoder().decode(chunk.slice(4, 4 + length))
-                            port = chunk[4 + length + 1] | chunk[4 + length] << 8
-                            chunk = chunk.slice(4 + length + 2)
-                            break
-                    }
-                    const current = {
-                        id: sessionID,
-                        buf: new Buffer(),
-                        socket: socket
-                    }
-                    console.info(`domain: ${hostname}:${port}, ${current.id}`)
+                    chunk = chunk.subarray(muxHeaderLen)
+                    const {hostname, port, offset} = parseMuxAddress(chunk, new DataView(chunk.buffer, chunk.byteOffset))
+                    chunk = chunk.subarray(offset)
+
+                    info(`domain: ${hostname}:${port}`)
                     const conn = connect(`${hostname}:${port}`, {secureTransport: "off"})
                     const writer = conn.writable.getWriter()
                     if (chunk.byteLength > 0) {
                         await writer.write(chunk)
                     }
 
-
-                    let sendResponse = true
-                    sessions[current.id] = {
-                        conn: conn,
-                        writer: writer
-                    }
-                    conn.readable.pipeTo(new WritableStream({
-                        start(controller) {
-                        },
-                        write(raw, controller) {
-                            if (sendResponse) {
-                                raw = merge([0], raw)
-                                sendResponse = false
-                            }
-                            const N = raw.byteLength
-                            let index = 0
-                            while (index < N) {
-                                current.buf.reset()
-
-                                const size = index + 2048 < N ? 2048 : N - index
-                                // length
-                                const L1 = (size >> 8) & Mask
-                                const L2 = size & Mask
-                                // id
-                                const I1 = (current.id >> 24) & Mask
-                                const I2 = (current.id >> 16) & Mask
-                                const I3 = (current.id >> 8) & Mask
-                                const I4 = current.id & Mask
-
-                                const header = new Uint8Array([1, PSH, L2, L1, I4, I3, I2, I1])
-                                current.buf.write(header, header.length)
-                                current.buf.write(raw.slice(index, index + size), size)
-                                current.socket.send(current.buf.bytes())
-                                index = index + size
-                            }
-                        },
-                        close() {
-                        },
-                        abort(e) {
-                        },
-                    })).catch((err) => {
-                        console.warn("connect::catch", err.stack)
-                        current.buf.reset()
-                        // id
-                        const I1 = (current.id >> 24) & Mask
-                        const I2 = (current.id >> 16) & Mask
-                        const I3 = (current.id >> 8) & Mask
-                        const I4 = current.id & Mask
-                        const header = new Uint8Array([1, PSH, 0, 0, I4, I3, I2, I1])
-                        current.socket.send(header)
-                        delete sessions[current.id]
+                    sessions[sessionID] = {conn: conn, writer: writer}
+                    handleRemoteToLocal(conn, sessionID, socket).catch((err) => {
+                        warn("connect::catch", err.stack)
+                        closeSession(sessionID)
+                    }).then(() => {
+                        closeSession(sessionID)
                     })
-
-                    return
                 }
 
                 if (command === FIN) {
-                    console.info(`StatusEnd end`)
-                    delete sessions[sessionID]
+                    closeSession(sessionID)
                     return;
                 }
 
                 if (command === NOP) {
-                    console.info(`StatusKeepAlive end`)
                     return;
                 }
 
                 if (command === PSH) {
-                    chunk = chunk.slice(muxHeaderLen, muxHeaderLen + length)
-                    const {conn, writer} = sessions[sessionID]
-                    if (writer) {
-                        await writer.write(chunk)
+                    if (sessions[sessionID]) {
+                        const {writer} = sessions[sessionID]
+                        if (writer) {
+                            await writer.write(chunk.subarray(muxHeaderLen, muxHeaderLen + length))
+                        }
                     }
                 }
             },
@@ -327,32 +347,14 @@ class MuxSocketStream {
         });
 
         await this.stream.readable.pipeTo(writableStream).catch((e) => {
-            console.warn("read write", e)
+            warn("read write", e.stack)
         })
-    }
-
-    merge(a, b) {
-        const aLen = a instanceof ArrayBuffer ? a.byteLength : a.length
-        const bLen = b instanceof ArrayBuffer ? b.byteLength : b.length
-
-        const merge = new Uint8Array(aLen + bLen)
-        let index = 0
-        for (let i = 0; i < aLen; i++) {
-            merge[index++] = a[i]
-        }
-        for (let i = 0; i < bLen; i++) {
-            merge[index++] = b[i]
-        }
-
-        a = null
-        b = null
-        return merge
     }
 }
 
 let uuid = null;
 
-const ruleManage = "manage"
+const ruleManage = "manager"
 const ruleAgent = "Agent"
 const ruleConnector = "Connector"
 
@@ -364,31 +366,35 @@ const modeForwardMux = "forwardMux"
 const protoWless = "Wless"
 const protoVless = "Vless"
 
+/**
+ * @param {string} proto 
+ * @param {Uint8Array} buffer 
+ * @returns 
+ */
 function parseProtoAddress(proto, buffer) {
-    console.info("data, ", proto, buffer.byteLength)
     let port, hostname, remain
     switch (proto) {
         case protoVless:
             port = buffer[20] | buffer[19] << 8
             switch (buffer[21]) {
                 case 1:
-                    hostname = buffer.slice(22, 22 + 4).join(".")
-                    remain = buffer.slice(22 + 4)
+                    hostname = buffer.subarray(22, 22 + 4).join(".")
+                    remain = buffer.subarray(22 + 4)
                     break
                 case 3:
-                    hostname = buffer.slice(22, 22 + 16).join(":")
-                    remain = buffer.slice(22 + 16)
+                    hostname = buffer.subarray(22, 22 + 16).join(":")
+                    remain = buffer.subarray(22 + 16)
                     break
                 case 2:
                     const length = buffer[22]
-                    hostname = new TextDecoder().decode(buffer.slice(23, 23 + length))
-                    remain = buffer.slice(23 + length)
+                    hostname = decoder.decode(buffer.subarray(23, 23 + length))
+                    remain = buffer.subarray(23 + length)
                     break
             }
             break
         default:
             const len = buffer[0]
-            const address = new TextDecoder().decode(buffer.slice(1, 1 + len))
+            const address = decoder.decode(buffer.subarray(1, 1 + len))
             const tokens = address.split(":")
             if (tokens.length >= 2) {
                 hostname = tokens[0].trim()
@@ -397,7 +403,7 @@ function parseProtoAddress(proto, buffer) {
                 hostname = tokens[0].trim()
                 port = 443
             }
-            remain = buffer.slice(1 + len)
+            remain = buffer.subarray(1 + len)
             break
     }
 
@@ -417,17 +423,16 @@ function safeCloseWebSocket(socket) {
             socket.close();
         }
     } catch (error) {
-        console.warn('safeCloseWebSocket error', error);
+        warn('safeCloseWebSocket error', error);
     }
 }
 
 async function websocket(request) {
     const url = new URL(request.url);
 
-    const name = url.searchParams.get("name")
-    const code = url.searchParams.get("code")
-    const rule = url.searchParams.get("rule")
-    const mode = url.searchParams.get("mode")
+    const name = url.searchParams.get("name") || ""
+    const rule = url.searchParams.get("rule") || ""
+    const mode = url.searchParams.get("mode") || ""
 
     if ([ruleConnector, ruleAgent].includes(rule) && [modeDirect, modeDirectMux].includes(mode)) {
         // @ts-ignore
@@ -438,14 +443,13 @@ async function websocket(request) {
         const proto = request.headers.get("proto")
         if (modeDirect === mode) {
             webSocket.onmessage = async (event) => {
-                console.info("proto", proto)
                 const {hostname, port, remain} = parseProtoAddress(proto, new Uint8Array(event.data))
                 if (proto === protoVless) {
                     webSocket.send(new Uint8Array(2))
                 }
 
-                const remote = new WebSocketStream(new EmendWebsocket(webSocket, `${rule}_${proto}}`))
-                console.info(`real addr: ${hostname}:${port}, ${remain.byteLength}`)
+                const remote = new WebSocketStream(new EmendWebsocket(webSocket, `direct`))
+                info(`real addr: ${hostname}:${port}, ${remain.byteLength}`)
                 const local = connect(`${hostname}:${port}`, {secureTransport: "off"})
                 if (remain && remain.byteLength > 0) {
                     const writer = local.writable.getWriter()
@@ -453,16 +457,16 @@ async function websocket(request) {
                     writer.releaseLock();
                 }
                 remote.readable.pipeTo(local.writable).catch((e) => {
-                    console.warn("socket exception", e.message)
+                    warn("socket exception", e.message)
                     safeCloseWebSocket(webSocket)
                 })
                 local.readable.pipeTo(remote.writable).catch((e) => {
-                    console.warn("socket exception", e.message)
+                    warn("socket exception", e.message)
                     safeCloseWebSocket(webSocket)
                 })
             }
         } else {
-            new MuxSocketStream(new WebSocketStream(new EmendWebsocket(webSocket, `${rule}_${proto}`)))
+            new MuxSocketStream(new WebSocketStream(new EmendWebsocket(webSocket, `mux-direct`)))
         }
 
         return new Response(null, {
