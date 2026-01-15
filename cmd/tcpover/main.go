@@ -182,7 +182,7 @@ func main() {
 			// 要连接到远端
 			mode = wss.ModeForward
 		} else if *name != "" && *remoteName != "" {
-			log.Infoln("register agent name [%v and connect remote name [%v] ...", *name, *remoteName)
+			log.Infoln("register agent name [%v] and connect remote name [%v] ...", *name, *remoteName)
 			// 自己要注册, 要连接到远端
 			mode = wss.ModeForward
 		}
