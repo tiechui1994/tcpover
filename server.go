@@ -370,7 +370,7 @@ func (s *Server) SS(ct context.Context, port uint16, name, password string) erro
 		Control: Control,
 	}
 
-	listen, err := listenConfig.Listen(ct, "tcp", fmt.Sprintf("127.0.0.1:%v", port))
+	listen, err := listenConfig.Listen(ct, "tcp", fmt.Sprintf("0.0.0.0:%v", port))
 	if err != nil {
 		return err
 	}
@@ -423,7 +423,7 @@ func (s *Server) TCPVless(ct context.Context, port uint16) error {
 		Control: Control,
 	}
 
-	listen, err := listenConfig.Listen(ct, "tcp", fmt.Sprintf("127.0.0.1:%v", port))
+	listen, err := listenConfig.Listen(ct, "tcp", fmt.Sprintf("0.0.0.0:%v", port))
 	if err != nil {
 		return err
 	}
