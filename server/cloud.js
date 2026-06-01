@@ -477,8 +477,7 @@ async function websocket(request) {
 
 async function speed(request) {
     try {
-        const {headers, cf} = request
-        const upgrade = headers.get("upgrade") || "";
+        const upgrade = request.headers.get("upgrade") || "";
         if (upgrade.toLowerCase() != "websocket") {
             return new Response("request isn't trying to upgrade to websocket.", { status: 400});
         }
@@ -497,7 +496,7 @@ async function speed(request) {
             const port = tokens.length >= 2 ? parseInt(tokens[1].trim()) : 443
 
             info(hostname, port, type == 0x01 ? "TCP" : "UDP")
-            const local = new WebSocketStream(websocket)
+            const local = new WebSocketStream(socket)
 
             if(type === 0x01) {
                 const remote = connect(`${hostname}:${port}`, {secureTransport: "off"})
@@ -525,9 +524,7 @@ async function speed(request) {
             status: 101,
             webSocket: client,
             headers: {
-                'x-edge': cf.colo,
-                'x-ip': headers.get('x-real-ip'),
-                'x-city': cf.region,
+                'x-ip': request.headers.get('x-real-ip')
             }
         });
     } catch(e) {
