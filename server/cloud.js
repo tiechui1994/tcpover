@@ -1,21 +1,6 @@
 // @ts-ignore
 import {connect} from 'cloudflare:sockets';
 
-class EmendWebsocket {
-    constructor(socket, attrs) {
-        this.socket = socket
-        this.attrs = attrs
-    }
-
-    close(code, reason) {
-        this.socket.close(code, reason)
-    }
-
-    send(chunk) {
-        this.socket.send(chunk)
-    }
-}
-
 const debug = false
 const warn = (...data) => {
     if (debug) console.warn(data)
@@ -88,34 +73,32 @@ class WebSocketStream {
         this.socket = socket
         this.readable = new ReadableStream({
             start(controller) {
-                socket.socket.onmessage = (event) => {
+                socket.onmessage = (event) => {
                     controller.enqueue(new Uint8Array(event.data));
                 };
-                socket.socket.onerror = (e) => {
-                    warn("<readable onerror>", e.message)
+                socket.onerror = (e) => {
+                    warn("readable onerror:", e.message)
                     controller.error(e)
                 }
             },
             pull(controller) {
             },
             cancel() {
-                socket.close(1000, socket.attrs + "readable cancel");
+                socket.close(1000, "readable cancel");
             },
         });
         this.writable = new WritableStream({
             start(controller) {
-                socket.socket.onerror = (e) => {
-                    warn("<writable onerror>:", e.message)
-                }
+                socket.onerror = (e) => warn("writable onerror:", e.message)
             },
             write(chunk, controller) {
                 socket.send(chunk);
             },
             close() {
-                socket.close(1000, socket.attrs + "writable close");
+                socket.close(1000, "writable close");
             },
             abort(e) {
-                socket.close(1006, socket.attrs + "writable abort");
+                socket.close(1006, "writable abort");
             },
         });
     }
@@ -182,7 +165,7 @@ class MuxSocketStream {
         /**
          * @param {any} conn 
          * @param {number} id 
-         * @param {EmendWebsocket} socket 
+         * @param {WebSocket} socket 
          */
         const handleRemoteToLocal = async(conn, id, socket) => {
             const headerBuf = new Uint8Array(8);
@@ -430,7 +413,6 @@ function safeCloseWebSocket(socket) {
 async function websocket(request) {
     const url = new URL(request.url);
 
-    const name = url.searchParams.get("name") || ""
     const rule = url.searchParams.get("rule") || ""
     const mode = url.searchParams.get("mode") || ""
 
@@ -448,8 +430,8 @@ async function websocket(request) {
                     webSocket.send(new Uint8Array(2))
                 }
 
-                const remote = new WebSocketStream(new EmendWebsocket(webSocket, `direct`))
-                info(`real addr: ${hostname}:${port}, ${remain.byteLength}`)
+                const remote = new WebSocketStream(webSocket)
+                info(`real addr: ${hostname}:${port}`)
                 const local = connect(`${hostname}:${port}`, {secureTransport: "off"})
                 if (remain && remain.byteLength > 0) {
                     const writer = local.writable.getWriter()
@@ -466,7 +448,7 @@ async function websocket(request) {
                 })
             }
         } else {
-            new MuxSocketStream(new WebSocketStream(new EmendWebsocket(webSocket, `mux-direct`)))
+            new MuxSocketStream(new WebSocketStream(webSocket))
         }
 
         return new Response(null, {
@@ -481,7 +463,7 @@ async function websocket(request) {
         webSocket.accept();
 
         webSocket.addEventListener("open", (event) => {
-            new WebSocketStream(new EmendWebsocket(webSocket, `${rule}_${name}`))
+            new WebSocketStream(webSocket)
         });
 
         return new Response(null, {
@@ -490,9 +472,67 @@ async function websocket(request) {
         });
     }
 
-    return new Response("Bad Request", {
-        status: 400,
-    });
+    return new Response("Bad Request", {status: 400});
+}
+
+async function speed(request) {
+    try {
+        const {headers, cf} = request
+        const upgrade = headers.get("upgrade") || "";
+        if (upgrade.toLowerCase() != "websocket") {
+            return new Response("request isn't trying to upgrade to websocket.", { status: 400});
+        }
+
+        const webSocketPair = new WebSocketPair();
+        const [client, socket] = Object.values(webSocketPair);
+        socket.accept();
+
+        socket.onmessage = async (event) => {
+            const packet = new Uint8Array(event.data)
+            const type = packet[0]
+            const len = packet[1]
+            const address = decoder.decode(packet.subarray(2, 2+len))
+            const tokens = address.split(":")
+            const hostname = tokens[0].trim()
+            const port = tokens.length >= 2 ? parseInt(tokens[1].trim()) : 443
+
+            info(hostname, port, type == 0x01 ? "TCP" : "UDP")
+            const local = new WebSocketStream(websocket)
+
+            if(type === 0x01) {
+                const remote = connect(`${hostname}:${port}`, {secureTransport: "off"})
+                const closeAll = () => {
+                    try { socket.close() } catch(e) { }
+                    try { remote.close() } catch(e) { }
+                }
+                    
+                await Promise.all([
+                    local.readable.pipeTo(remote.writable).catch((e) => {
+                        warn("local exception:", e.message)
+                    }),
+                    remote.readable.pipeTo(local.writable).catch((e) => {
+                        warn("remote exception:", e.message);
+                    })
+                ]).catch( (e) => {
+                    warn("close:", e.message)
+                }).finally(() => closeAll())
+            } else {
+                await socket.close(1000, "udp closed")
+            }
+        }
+
+        return new Response(null, {
+            status: 101,
+            webSocket: client,
+            headers: {
+                'x-edge': cf.colo,
+                'x-ip': headers.get('x-real-ip'),
+                'x-city': cf.region,
+            }
+        });
+    } catch(e) {
+        console.warn(`speed: ${e.message}`)        
+    }
 }
 
 
@@ -521,7 +561,7 @@ export default {
             const hosts = request.headers.get('x-real-host').trim().split(',')
             const host = hosts[(new Date()).valueOf() % hosts.length]
             const u = "https://" + host + path
-            console.log("request url:", u)
+            info("request url:", u)
             return await forward(request, u).catch(e => {})
         } else if (path.startsWith("/https://") || path.startsWith("/http://")) {
             const u = path.substring(1)
@@ -535,14 +575,11 @@ export default {
 
         const upgradeHeader = request.headers.get('Upgrade');
         if (!upgradeHeader || upgradeHeader !== 'websocket') {
-            switch (url.pathname) {
-                case "/check":
-                    return check(request)
-                default:
-                    return new Response("hello world");
-            }
+            return new Response("hello world");
         } else if (url.pathname === "/api/ssh") {
-            return await websocket(request).catch(e => {})
+            return await websocket(request)
+        } else if (url.pathname === "/api/speed") {
+            return await speed(request)
         }
     }
 }
