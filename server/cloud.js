@@ -536,16 +536,7 @@ async function speed(request) {
 async function forward(request, u) {
     const url = new URL(u)
     request.headers['host'] = url.host
-    let init = {
-        method: request.method,
-        headers: request.headers
-    }
-    if (['POST', 'PUT'].includes(request.method.toUpperCase())) {
-        init.body = request.body
-    }
-
-    const response = await fetch(u, init)
-    return new Response(response.body, response)
+    return await fetch(u, request)
 }
 
 
