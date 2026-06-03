@@ -13,59 +13,45 @@ const info =  (...data) => {
 }
 
 class Buffer {
-    constructor(initialCapacity = 256) {
+    constructor(initialCapacity = 512) {
         this.data = new Uint8Array(initialCapacity);
     }
 
     /**
-     * @param {chunk} chunk 
+     * @param {Uint8Array} chunk 
      */
     write(chunk) {
         const needed = this.size + chunk.byteLength;
         if (needed > this.data.byteLength) {
-            this.grow(needed);
+            let newCapacity = this.data.byteLength * 2;
+            if (newCapacity < needed) newCapacity = needed;
+            info(`size to: ${newCapacity}`)
+            const newData = new Uint8Array(newCapacity);
+            newData.set(this.data);
+            this.data = newData;
         }
         // 使用高效的底层内存拷贝
         this.data.set(chunk, this.size);
         this.size += chunk.byteLength;
     }
 
-    grow(minCapacity) {
-        info(`size to: ${this.data.byteLength * 2}`)
-        let newCapacity = this.data.byteLength * 2;
-        if (newCapacity < minCapacity) newCapacity = minCapacity;
-
-        const newData = new Uint8Array(newCapacity);
-        newData.set(this.data); // 拷贝原有数据
-        this.data = newData;
-    }
-
     /**
      * @return Uint8Array
      */
-    bytes() {
-        return this.data.subarray(0, this.size);
-    }
+    bytes() { return this.data.subarray(0, this.size); }
 
     /**
      * @param {number} start 
      * @param {number} end 
      * @return Uint8Array
      */
-    subarray(start, end) {
-        return this.data.subarray(start, end ?? this.size);
-    }
+    subarray(start, end) { return this.data.subarray(start, end ?? this.size);}
     /**
      * @param {number} index
      */
     at(index) { return this.data[index]; }
     length() { return this.size; }
-    reset() { this.size = 0; }
-    release() {
-        this.size = 0
-        this.data = null;
-        info(`release`)
-    }
+    release() { this.size = 0; }
 }
 
 class WebSocketStream {
@@ -84,7 +70,7 @@ class WebSocketStream {
             pull(controller) {
             },
             cancel() {
-                socket.close(1000, "readable cancel");
+                safeExecute(() => socket.close(1000, "readable cancel"));
             },
         });
         this.writable = new WritableStream({
@@ -95,10 +81,10 @@ class WebSocketStream {
                 socket.send(chunk);
             },
             close() {
-                socket.close(1000, "writable close");
+                safeExecute(() => socket.close());
             },
             abort(e) {
-                socket.close(1006, "writable abort");
+                safeExecute(() => socket.close(1006, "writable abort"));
             },
         });
     }
@@ -110,16 +96,27 @@ const PSH = 0x02
 const NOP = 0x03
 const vlessHeaderLen = 1 + 16 + 1 + 1 + 2 + 1
 const muxHeaderLen = 8
-
 const decoder = new TextDecoder()
+
+/**
+ * @param { () => any} fn 
+ */
+const safeExecute = (fn) => {
+    try {
+        const result = fn();
+        if (result instanceof Promise) {
+            result.catch(() => {});
+        }
+    } catch (_) {}
+};
 
 class MuxSocketStream {
     constructor(stream) {
         this.stream = stream;
         this.sessions = {}
         this.run().catch((err) => {
-            warn("run::catch", err.stack)
-            this.stream.socket.close(1000)
+            warn("run::catch", err.message)
+            safeExecute(() => this.stream.socket.close(1000));
         })
     }
 
@@ -168,37 +165,44 @@ class MuxSocketStream {
          * @param {WebSocket} socket 
          */
         const handleRemoteToLocal = async(conn, id, socket) => {
-            const headerBuf = new Uint8Array(8);
-            const view = new DataView(headerBuf.buffer);
+            // 核心性能优化：预分配一个复用的发送缓冲区，避免每次发送都创建新数组
+            const sendBuffer = new Uint8Array(8 + 4096);
+            const view = new DataView(sendBuffer.buffer);
+            
+            // 预设头部固定不变的数据
+            view.setUint8(0, 1);
+            view.setUint8(1, PSH);
+            view.setUint32(4, id, true);
+
             let first = true;
+            try {
+                for await (const raw of conn.readable) {
+                    let chunk = raw;
+                    // 响应首包特殊处理 (根据原逻辑补 0)
+                    if (first) {
+                        const tmp = new Uint8Array(raw.byteLength + 1);
+                        tmp.set(raw, 1);
+                        chunk = tmp;
+                        first = false;
+                    }
 
-            for await (const raw of conn.readable) {
-                let chunk = raw;
-                // 响应首包特殊处理 (根据原逻辑补 0)
-                if (first) {
-                    const tmp = new Uint8Array(raw.byteLength + 1);
-                    tmp.set(raw, 1);
-                    chunk = tmp;
-                    first = false;
+                    // 分段发送，避免单个包过大
+                    let index = 0;
+                    while (index < chunk.byteLength) {
+                        const size = Math.min(chunk.byteLength - index, 4096);
+                        view.setUint16(2, size, true);
+
+                        // 将数据拷贝到预分配的 Buffer 头部之后
+                        sendBuffer.set(chunk.subarray(index, index + size), 8);
+                        
+                        // 一次性发送完整的 WebSocket 帧，合并 Header 与 Data
+                        socket.send(sendBuffer.subarray(0, 8 + size));
+                        
+                        index += size;
+                    }
                 }
-
-                // 分段发送，避免单个包过大
-                let index = 0;
-                while (index < chunk.byteLength) {
-                    const size = Math.min(chunk.byteLength - index, 4096);
-                    view.setUint8(0, 1);
-                    view.setUint8(1, PSH); // PSH
-                    view.setUint16(2, size, true);
-                    view.setUint32(4, id, true);
-
-                    socket.send(headerBuf)
-                    socket.send(chunk.subarray(index, index + size));
-                    //const fullPacket = new Uint8Array(8 + size);
-                    //fullPacket.set(headerBuf, 0);
-                    //fullPacket.set(chunk.subarray(index, index + size), 8);
-                    //socket.send(fullPacket);
-                    index += size;
-                }
+            }finally {
+                safeExecute(() => conn.close());
             }
         }
         /**
@@ -211,9 +215,11 @@ class MuxSocketStream {
                 const view = new DataView(headerBuf.buffer);
                 view.setUint8(0,1)
                 view.setUint8(1, FIN)
-                view.setUint16(2, 0,true)
-                view.setUint32(4, id,true)
-                socket.send(view.buffer)
+                view.setUint16(2, 0, true)
+                view.setUint32(4, id, true)
+
+                safeExecute(() => socket.send(view.buffer));
+                safeExecute(() => session.conn.close());
                 delete this.sessions[id];
             }
         }
@@ -255,17 +261,16 @@ class MuxSocketStream {
                     else if (addrType==2) realLen += 1 + firstBuffer.at(vlessHeaderLen);
 
                     // 2) mux version info, 2 bytes
-                    if (firstBuffer.length() < realLen + 2) return
+                    realLen  += 2
+                    if (firstBuffer.length() < realLen) return
 
                     socket.send(new Uint8Array(2))
 
-                    realLen  += 2
                     readRequest = false
-                    chunk = firstBuffer.subarray(realLen)
-                    if (chunk.byteLength === 0) {
-                        firstBuffer.release()
-                        return
-                    }
+                    readRequest = false;
+                    chunk = firstBuffer.subarray(realLen);
+                    firstBuffer.release();
+                    if (chunk.byteLength === 0) return;
                 }
 
                 if (remainChunk && remainChunk.byteLength > 0) {
@@ -289,20 +294,25 @@ class MuxSocketStream {
                     const {hostname, port, offset} = parseMuxAddress(chunk, new DataView(chunk.buffer, chunk.byteOffset))
                     chunk = chunk.subarray(offset)
 
-                    info(`domain: ${hostname}:${port}`)
-                    const conn = connect(`${hostname}:${port}`, {secureTransport: "off"})
-                    const writer = conn.writable.getWriter()
-                    if (chunk.byteLength > 0) {
-                        await writer.write(chunk)
-                    }
+                    try {
+                        info(`domain: ${hostname}:${port}`)
+                        const conn = connect(`${hostname}:${port}`, {secureTransport: "off"})
+                        const writer = conn.writable.getWriter()
+                        if (chunk.byteLength > 0) {
+                            await writer.write(chunk)
+                        }
 
-                    sessions[sessionID] = {conn: conn, writer: writer}
-                    handleRemoteToLocal(conn, sessionID, socket).catch((err) => {
-                        warn("connect::catch", err.stack)
-                        closeSession(sessionID)
-                    }).then(() => {
-                        closeSession(sessionID)
-                    })
+                        sessions[sessionID] = {conn: conn, writer: writer}
+                        handleRemoteToLocal(conn, sessionID, socket).catch((err) => {
+                            warn("connect::catch", err.message)
+                            closeSession(sessionID)
+                        }).then(() => {
+                            closeSession(sessionID)
+                        })
+                    } catch (e) {
+                        error("connect error", e.message);
+                        closeSession(sessionID);
+                    }
                 }
 
                 if (command === FIN) {
@@ -330,12 +340,11 @@ class MuxSocketStream {
         });
 
         await this.stream.readable.pipeTo(writableStream).catch((e) => {
-            warn("read write", e.stack)
+            warn("read write pipe exception", e.message);
         })
     }
 }
 
-let uuid = null;
 
 const ruleManage = "manager"
 const ruleAgent = "Agent"
@@ -356,58 +365,35 @@ const protoVless = "Vless"
  */
 function parseProtoAddress(proto, buffer) {
     let port, hostname, remain
-    switch (proto) {
-        case protoVless:
-            port = buffer[20] | buffer[19] << 8
-            switch (buffer[21]) {
-                case 1:
-                    hostname = buffer.subarray(22, 22 + 4).join(".")
-                    remain = buffer.subarray(22 + 4)
-                    break
-                case 3:
-                    hostname = buffer.subarray(22, 22 + 16).join(":")
-                    remain = buffer.subarray(22 + 16)
-                    break
-                case 2:
-                    const length = buffer[22]
-                    hostname = decoder.decode(buffer.subarray(23, 23 + length))
-                    remain = buffer.subarray(23 + length)
-                    break
-            }
-            break
-        default:
-            const len = buffer[0]
-            const address = decoder.decode(buffer.subarray(1, 1 + len))
-            const tokens = address.split(":")
-            if (tokens.length >= 2) {
-                hostname = tokens[0].trim()
-                port = parseInt(tokens[1].trim())
-            } else {
-                hostname = tokens[0].trim()
-                port = 443
-            }
-            remain = buffer.subarray(1 + len)
-            break
+    if (proto === protoVless) {
+        port = buffer[20] | buffer[19] << 8
+        const type = buffer[21];
+        if (type == 1) {
+            hostname = buffer.subarray(22, 22 + 4).join(".")
+            remain = buffer.subarray(22 + 4)
+        } else if (type == 2) {
+            const length = buffer[22]
+            hostname = decoder.decode(buffer.subarray(23, 23 + length))
+            remain = buffer.subarray(23 + length)
+        } else if (type == 3) {
+            hostname = buffer.subarray(22, 22 + 16).join(":")
+            remain = buffer.subarray(22 + 16)
+        }
+    } else {
+        const len = buffer[0]
+        const address = decoder.decode(buffer.subarray(1, 1 + len))
+        const tokens = address.split(":")
+        if (tokens.length >= 2) {
+            hostname = tokens[0].trim()
+            port = parseInt(tokens[1].trim())
+        } else {
+            hostname = tokens[0].trim()
+            port = 443
+        }
+        remain = buffer.subarray(1 + len)
     }
 
     return {hostname, port, remain}
-}
-
-function check(request) {
-    if (!uuid) {
-        uuid = new Date();
-    }
-    return new Response("code is:" + uuid.valueOf())
-}
-
-function safeCloseWebSocket(socket) {
-    try {
-        if (socket.readyState === 1 || socket.readyState === 2) {
-            socket.close();
-        }
-    } catch (error) {
-        warn('safeCloseWebSocket error', error);
-    }
 }
 
 async function websocket(request) {
@@ -419,36 +405,46 @@ async function websocket(request) {
     if ([ruleConnector, ruleAgent].includes(rule) && [modeDirect, modeDirectMux].includes(mode)) {
         // @ts-ignore
         const webSocketPair = new WebSocketPair();
-        const [client, webSocket] = Object.values(webSocketPair);
-        webSocket.accept();
+        const [client, socket] = Object.values(webSocketPair);
+        socket.accept();
 
         const proto = request.headers.get("proto")
         if (modeDirect === mode) {
-            webSocket.onmessage = async (event) => {
+            socket.onmessage = async (event) => {
                 const {hostname, port, remain} = parseProtoAddress(proto, new Uint8Array(event.data))
                 if (proto === protoVless) {
-                    webSocket.send(new Uint8Array(2))
+                    socket.send(new Uint8Array(2))
                 }
 
-                const remote = new WebSocketStream(webSocket)
-                info(`real addr: ${hostname}:${port}`)
-                const local = connect(`${hostname}:${port}`, {secureTransport: "off"})
-                if (remain && remain.byteLength > 0) {
-                    const writer = local.writable.getWriter()
-                    await writer.write(remain)
-                    writer.releaseLock();
-                }
-                remote.readable.pipeTo(local.writable).catch((e) => {
-                    warn("socket exception", e.message)
-                    safeCloseWebSocket(webSocket)
-                })
-                local.readable.pipeTo(remote.writable).catch((e) => {
-                    warn("socket exception", e.message)
-                    safeCloseWebSocket(webSocket)
-                })
+                try {
+                    const local = new WebSocketStream(socket)
+
+                    info(`real addr: ${hostname}:${port}`)
+                    const remote = connect(`${hostname}:${port}`, {secureTransport: "off"})
+                    if (remain && remain.byteLength > 0) {
+                        const writer = remote.writable.getWriter()
+                        await writer.write(remain)
+                        writer.releaseLock();
+                    }
+
+                    const closeAll = () => {
+                        try { socket.close() } catch(e) { }
+                        try { remote.close() } catch(e) { }
+                    }
+
+                    Promise.all([
+                        local.readable.pipeTo(remote.writable).catch((e) => warn("local pipe error:", e.message)),
+                        remote.readable.pipeTo(local.writable).catch((e) => warn("remote pipe error:", e.message))
+                    ]).finally(() => {
+                        closeAll()
+                    })
+                } catch(e) {
+                    warn("connect direct error:", e.message);
+                    safeExecute(() => socket.close());
+                } 
             }
         } else {
-            new MuxSocketStream(new WebSocketStream(webSocket))
+            new MuxSocketStream(new WebSocketStream(socket))
         }
 
         return new Response(null, {
@@ -459,11 +455,11 @@ async function websocket(request) {
 
     if (rule === ruleManage) {
         const webSocketPair = new WebSocketPair();
-        const [client, webSocket] = Object.values(webSocketPair);
-        webSocket.accept();
+        const [client, socket] = Object.values(webSocketPair);
+        socket.accept();
 
-        webSocket.addEventListener("open", (event) => {
-            new WebSocketStream(webSocket)
+        socket.addEventListener("open", (event) => {
+            new WebSocketStream(socket)
         });
 
         return new Response(null, {
