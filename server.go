@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -223,16 +222,12 @@ func (s *Server) manageConnect(name string, r *http.Request, w http.ResponseWrit
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Upgrade") != "websocket" {
-		if r.URL.Path == "/health" {
+		if strings.HasSuffix(r.URL.Path, "/health") {
 			s.Health(w, r)
 			return
 		}
-		if r.URL.Path == "/upgrade" {
+		if strings.HasSuffix(r.URL.Path, "/upgrade") {
 			s.Upgrade(w, r)
-			return
-		}
-		if r.URL.Path == "/" {
-			s.Version(w, r)
 			return
 		}
 
@@ -245,14 +240,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var u *url.URL
-		if regexp.MustCompile(`^/https?://`).MatchString(r.RequestURI) {
-			u, _ = url.Parse(r.RequestURI[1:])
-		} else {
-			u, _ = url.Parse("https://api.quinn.eu.org")
-		}
-		log.Infoln("proxy url: %v", u)
-		s.ProxyHandler(u, w, r)
+		s.Version(w, r)
 		return
 	}
 

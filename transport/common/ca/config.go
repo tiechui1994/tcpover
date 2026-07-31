@@ -1,6 +1,5 @@
 package ca
 
-import "C"
 import (
 	"crypto/tls"
 	"crypto/x509"
@@ -76,7 +75,7 @@ func GetTLSConfig(opt Option) (tlsConfig *tls.Config, err error) {
 
 	if len(opt.Certificate) > 0 || len(opt.PrivateKey) > 0 {
 		var cert tls.Certificate
-		cert, err = LoadTLSKeyPair(opt.Certificate, opt.PrivateKey, C.Path)
+		cert, err = LoadTLSKeyPair(opt.Certificate, opt.PrivateKey)
 		if err != nil {
 			return nil, err
 		}

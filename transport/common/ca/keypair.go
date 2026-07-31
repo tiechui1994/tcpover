@@ -10,7 +10,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"fmt"
 	"math/big"
 	"time"
 )
@@ -25,7 +24,7 @@ type Path interface {
 // Returns a tls.Certificate and an error, where the error indicates issues during parsing or file loading.
 // If both certificate and privateKey are empty, generates a random TLS RSA key pair.
 // Accepts a Path interface for resolving file paths when necessary.
-func LoadTLSKeyPair(certificate, privateKey string, path Path) (tls.Certificate, error) {
+func LoadTLSKeyPair(certificate, privateKey string) (tls.Certificate, error) {
 	if certificate == "" && privateKey == "" {
 		var err error
 		certificate, privateKey, _, err = NewRandomTLSKeyPair(KeyPairTypeRSA)
@@ -37,24 +36,7 @@ func LoadTLSKeyPair(certificate, privateKey string, path Path) (tls.Certificate,
 	if painTextErr == nil {
 		return cert, nil
 	}
-	if path == nil {
-		return tls.Certificate{}, painTextErr
-	}
-
-	certificate = path.Resolve(certificate)
-	privateKey = path.Resolve(privateKey)
-	var loadErr error
-	if !path.IsSafePath(certificate) {
-		loadErr = path.ErrNotSafePath(certificate)
-	} else if !path.IsSafePath(privateKey) {
-		loadErr = path.ErrNotSafePath(privateKey)
-	} else {
-		cert, loadErr = tls.LoadX509KeyPair(certificate, privateKey)
-	}
-	if loadErr != nil {
-		return tls.Certificate{}, fmt.Errorf("parse certificate failed, maybe format error:%s, or path error: %s", painTextErr.Error(), loadErr.Error())
-	}
-	return cert, nil
+	return tls.Certificate{}, painTextErr
 }
 
 type KeyPairType string
