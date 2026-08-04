@@ -14,7 +14,7 @@ import (
 
 var DefaultMuxConfig = smux.Config{
 	Version:           1,
-	KeepAliveDisabled: false,
+	KeepAliveDisabled: true,
 	KeepAliveInterval: 30 * time.Second,
 	KeepAliveTimeout:  20 * time.Second,
 	MaxFrameSize:      8192,
