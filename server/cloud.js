@@ -59,8 +59,12 @@ class WebSocketStream {
         this.socket = socket
         this.readable = new ReadableStream({
             start(controller) {
-                socket.onmessage = (event) => {
-                    controller.enqueue(new Uint8Array(event.data));
+                socket.onmessage = async (event) => {
+					const data = await toBytes(event.data)
+					if (!data) {
+						throw new Error(`stream invalid type: ${Object.prototype.toString.call(event.data)}`)
+					}
+                    controller.enqueue(data);
                 };
                 socket.onerror = (e) => {
                     warn("readable onerror:", e.message)
@@ -98,6 +102,12 @@ const vlessHeaderLen = 1 + 16 + 1 + 1 + 2 + 1
 const muxHeaderLen = 8
 const decoder = new TextDecoder()
 
+const CONFIG = {
+    MaxFrameSize: 8192,     // 单帧最大 Payload 限制 (8KB)
+    MaxStreamBuffer: 262144, // 单流发送缓冲区限制 (256KB)
+    KeepAliveInterval: 30000 // 心跳保活定时器 (30s 发送一次 NOP)
+};
+
 /**
  * @param { () => any} fn 
  */
@@ -114,15 +124,55 @@ class MuxSocketStream {
     constructor(stream) {
         this.stream = stream;
         this.sessions = {}
+		this.heartbeatTimer = null;
+		
         this.run().catch((err) => {
             warn("run::catch", err.message)
-            safeExecute(() => this.stream.socket.close(1000));
+            this.destroy()
         })
+		this.startHeartbeat();
     }
 
+    
+	startHeartbeat() {
+		const socket = this.stream.socket;
+		const nopFrame = new Uint8Array(muxHeaderLen);
+		const view = new DataView(nopFrame.buffer);
+		view.setUint8(0, 1);   // version
+		view.setUint8(1, NOP); // command NOP
+		view.setUint16(2, 0, true);
+		view.setUint32(4, 1, true); 
+		
+        this.heartbeatTimer = setInterval(async() => {
+			if (socket.readyState !== 1) {
+				return
+			}
+            await this.sendFrame(nopFrame);
+        }, CONFIG.KeepAliveInterval);
+    }
+	
+	destroy() {
+        if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+        safeExecute(() => this.stream.socket.close(1000));
+    }
+	
     async run() {
         const socket = this.stream.socket
         const sessions = this.sessions
+		
+		// 【纯原生背压控制】：无需数组队列，利用 WebSocket 缓冲积压实现挂起
+		const sendFrame = async (frame) => {
+			// 阈值：如果当前 WebSocket 发送缓冲区积压超过 4 MB (可选)
+			// 就挂起当前逻辑，等待缓冲区释放，防止内存爆掉，且阻塞上游继续读取
+			const MAX_BUFFER = 512 * CONFIG.MaxFrameSize;
+			while (socket.bufferedAmount > MAX_BUFFER) {
+				// 每次挂起 10 毫秒，让出事件循环给网络层发送数据
+			    await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			socket.send(frame);
+		}
+		this.sendFrame = sendFrame;
+	
         /**
          * @param {Uint8Array} a 
          * @param {Uint8Array} b 
@@ -166,8 +216,8 @@ class MuxSocketStream {
          */
         const handleRemoteToLocal = async(conn, id, socket) => {
             // 核心性能优化：预分配一个复用的发送缓冲区，避免每次发送都创建新数组
-            const sendBuffer = new Uint8Array(8 + 4096);
-            const view = new DataView(sendBuffer.buffer);
+            const frameBuffer = new Uint8Array(muxHeaderLen + CONFIG.MaxFrameSize);
+            const view = new DataView(frameBuffer.buffer);
             
             // 预设头部固定不变的数据
             view.setUint8(0, 1);
@@ -189,16 +239,21 @@ class MuxSocketStream {
                     // 分段发送，避免单个包过大
                     let index = 0;
                     while (index < chunk.byteLength) {
-                        const size = Math.min(chunk.byteLength - index, 4096);
+                        const size = Math.min(chunk.byteLength - index, CONFIG.MaxFrameSize);
                         view.setUint16(2, size, true);
 
                         // 将数据拷贝到预分配的 Buffer 头部之后
-                        sendBuffer.set(chunk.subarray(index, index + size), 8);
+                        frameBuffer.set(chunk.subarray(index, index + size), muxHeaderLen);
                         
                         // 一次性发送完整的 WebSocket 帧，合并 Header 与 Data
-                        socket.send(sendBuffer.subarray(0, 8 + size));
+                        await sendFrame(frameBuffer.subarray(0, muxHeaderLen + size));
                         
                         index += size;
+						
+						// 给微任务队列让出 CPU，避免阻塞其他任务
+						if (index > 0 && index % (5*CONFIG.MaxFrameSize) === 0) {
+							await new Promise(resolve => setTimeout(resolve, 0));
+						}
                     }
                 }
             }finally {
@@ -211,18 +266,19 @@ class MuxSocketStream {
         const closeSession = (id) => {
             const session = sessions[id];
             if (session) {
-                const headerBuf = new Uint8Array(8);
+                const headerBuf = new Uint8Array(muxHeaderLen);
                 const view = new DataView(headerBuf.buffer);
                 view.setUint8(0,1)
                 view.setUint8(1, FIN)
                 view.setUint16(2, 0, true)
                 view.setUint32(4, id, true)
 
-                safeExecute(() => socket.send(view.buffer));
+                safeExecute(async () => sendFrame(view.buffer));
                 safeExecute(() => session.conn.close());
                 delete this.sessions[id];
             }
         }
+		this.closeSession = closeSession;
 
 
         // mux:
@@ -264,9 +320,8 @@ class MuxSocketStream {
                     realLen  += 2
                     if (firstBuffer.length() < realLen) return
 
-                    socket.send(new Uint8Array(2))
+                    await sendFrame(new Uint8Array(2))
 
-                    readRequest = false
                     readRequest = false;
                     chunk = firstBuffer.subarray(realLen);
                     firstBuffer.release();
@@ -345,11 +400,6 @@ class MuxSocketStream {
     }
 }
 
-
-const ruleManage = "manager"
-const ruleAgent = "Agent"
-const ruleConnector = "Connector"
-
 const modeDirect = "direct"
 const modeForward = "forward"
 const modeDirectMux = "directMux"
@@ -396,22 +446,37 @@ function parseProtoAddress(proto, buffer) {
     return {hostname, port, remain}
 }
 
+async function toBytes(data) {
+  if (data instanceof ArrayBuffer) {
+	  return new Uint8Array(data)
+  } else if (data instanceof Uint8Array) {
+	  return data
+  } else if (data instanceof Blob) {
+	  return new Uint8Array(await data.arrayBuffer());
+  } else {
+	  warn("unsupported ws payload type:", Object.prototype.toString.call(data));
+	  return null  
+  }
+}
+
 async function websocket(request) {
     const url = new URL(request.url);
-
-    const rule = url.searchParams.get("rule") || ""
     const mode = url.searchParams.get("mode") || ""
 
-    if ([ruleConnector, ruleAgent].includes(rule) && [modeDirect, modeDirectMux].includes(mode)) {
+    if ([modeDirect, modeDirectMux].includes(mode)) {
         // @ts-ignore
-        const webSocketPair = new WebSocketPair();
-        const [client, socket] = Object.values(webSocketPair);
+        const [client, socket] = Object.values(new WebSocketPair());
         socket.accept();
 
         const proto = request.headers.get("proto")
         if (modeDirect === mode) {
             socket.onmessage = async (event) => {
-                const {hostname, port, remain} = parseProtoAddress(proto, new Uint8Array(event.data))
+				const data = await toBytes(event.data)
+				if (!data) {
+				   safeExecute(() => socket.close(1000, `stream invalid type: ${Object.prototype.toString.call(event.data)}`))
+				   return
+				}
+                const {hostname, port, remain} = parseProtoAddress(proto, data)
                 if (proto === protoVless) {
                     socket.send(new Uint8Array(2))
                 }
@@ -453,21 +518,6 @@ async function websocket(request) {
         });
     }
 
-    if (rule === ruleManage) {
-        const webSocketPair = new WebSocketPair();
-        const [client, socket] = Object.values(webSocketPair);
-        socket.accept();
-
-        socket.addEventListener("open", (event) => {
-            new WebSocketStream(socket)
-        });
-
-        return new Response(null, {
-            status: 101,
-            webSocket: client,
-        });
-    }
-
     return new Response("Bad Request", {status: 400});
 }
 
@@ -478,12 +528,17 @@ async function speed(request) {
             return new Response("request isn't trying to upgrade to websocket.", { status: 400});
         }
 
-        const webSocketPair = new WebSocketPair();
-        const [client, socket] = Object.values(webSocketPair);
+		
+        const [client, socket] = Object.values(new WebSocketPair());
         socket.accept();
 
         socket.onmessage = async (event) => {
-            const packet = new Uint8Array(event.data)
+			const data = await toBytes(event.data)
+			if (!data) {
+			  safeExecute(() => socket.close(1000, `stream invalid type: ${Object.prototype.toString.call(event.data)}`))
+			  return
+			}
+            const packet = new Uint8Array(data)
             const type = packet[0]
             const len = packet[1]
             const address = decoder.decode(packet.subarray(2, 2+len))
