@@ -14,12 +14,12 @@ import (
 
 var DefaultMuxConfig = smux.Config{
 	Version:           1,
-	KeepAliveInterval: 10 * time.Second,
-	KeepAliveTimeout:  30 * time.Second,
-	MaxFrameSize:      32768,
+	KeepAliveDisabled: false,
+	KeepAliveInterval: 30 * time.Second,
+	KeepAliveTimeout:  20 * time.Second,
+	MaxFrameSize:      8192,
 	MaxReceiveBuffer:  4194304,
 	MaxStreamBuffer:   65536,
-	KeepAliveDisabled: true,
 }
 
 const (
