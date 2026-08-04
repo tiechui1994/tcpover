@@ -2,6 +2,7 @@ package mux
 
 import (
 	"context"
+	"io"
 	"net"
 	"time"
 	"unsafe"
@@ -57,16 +58,24 @@ func (s *Service) NewConnection(conn net.Conn) error {
 			_ = recover()
 			ticker.Stop()
 		}()
-
+		
+		done := session.CloseChan()
 		frame := *(*smux.Frame)(unsafe.Pointer(&frame{
 			ver:  byte(DefaultMuxConfig.Version),
 			cmd:  3,
 			sid:  1,
 			data: make([]byte, 0),
 		}))
-
-		for range ticker.C {
-			_, _ = writeControlFrame(session, frame)
+		for {
+			select {
+			case <-ticker.C:
+				_, err := writeControlFrame(session, frame)
+				if err == io.ErrClosedPipe {
+					return
+				}
+			case <-done:
+				return
+			}
 		}
 	}()
 
