@@ -16,7 +16,7 @@ var DefaultMuxConfig = smux.Config{
 	Version:           1,
 	KeepAliveDisabled: false,            // 这个是 Mihomo 必须设置的
 	KeepAliveInterval: 30 * time.Second, // 无用
-	KeepAliveTimeout:  20 * time.Second, // 无用
+	KeepAliveTimeout:  60 * time.Second, // 无用
 	MaxFrameSize:      8192,             // 8K
 	MaxReceiveBuffer:  4194304,
 	MaxStreamBuffer:   65536, // 用不到
