@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-var globalFingerprints = make([][32]byte, 0, 0)
+var globalFingerprints = make([][32]byte, 0)
 
 func verifyPeerCertificateAndFingerprints(fingerprints *[][32]byte, insecureSkipVerify bool) func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {

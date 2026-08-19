@@ -161,7 +161,6 @@ func connect(ctx context.Context, optionMode wss.Mode, optionServer, remoteName 
 	conn, err := wss.WebSocketConnect(ctx, optionServer, &wss.ConnectParam{
 		Name:   remoteName,
 		Mode:   optionMode,
-		Role:   wss.RoleAgent,
 		Header: wss.Header(proxyType, header),
 	})
 	if err != nil {

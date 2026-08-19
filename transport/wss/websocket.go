@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/tiechui1994/tool/log"
 	"net"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/tiechui1994/tool/log"
 
 	"github.com/gorilla/websocket"
 )
@@ -21,9 +22,7 @@ const (
 )
 
 const (
-	RoleManager   = "manager"
-	RoleAgent     = "Agent"
-	RoleConnector = "Connector"
+	RoleManager = "manager"
 )
 
 const (
@@ -104,9 +103,11 @@ func RawWebSocketConnect(ctx context.Context, server string, param *ConnectParam
 
 	query := url.Values{}
 	query.Set("name", param.Name)
-	query.Set("rule", param.Role)
 	query.Set("code", param.Code)
 	query.Set("mode", string(param.Mode))
+	if param.Role != "" {
+		query.Set("rule", param.Role)
+	}
 	u := server + "?" + query.Encode()
 	conn, resp, err := dialer.DialContext(ctx, u, param.Header)
 	if err != nil {

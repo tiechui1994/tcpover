@@ -83,7 +83,6 @@ func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAd
 
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Name:   remoteName,
-		Role:   wss.RoleConnector,
 		Mode:   mode,
 		Header: wss.Header(proto, header),
 	})

@@ -147,7 +147,7 @@ try:
 					isMux, _ := cmd.Data["Mux"].(bool)
 					err = c.connectLocal(code, network, proto, header, isMux)
 					if err != nil {
-						log.Errorln("ConnectLocal:", err)
+						log.Errorln("ConnectLocal: %v", err)
 					}
 				}()
 			}
@@ -162,7 +162,6 @@ func (c *PassiveResponder) connectLocal(code, network, proto string, header map[
 	}
 	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
 		Code:   code,
-		Role:   wss.RoleAgent,
 		Mode:   mode,
 		Header: wss.Header(proto, header),
 	})

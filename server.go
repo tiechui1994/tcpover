@@ -9,8 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +44,8 @@ type Server struct {
 	defaultHeader http.Header
 	upgrade       *websocket.Upgrader
 	conn          int32 // number of active connections
+
+	date time.Time
 }
 
 func NewServer() *Server {
@@ -61,6 +61,7 @@ func NewServer() *Server {
 			},
 		},
 		groupConn: map[string]*PairGroup{},
+		date:      time.Now(),
 	}
 }
 
@@ -230,6 +231,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.Upgrade(w, r)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/time") {
+			s.Time(w, r)
+			return
+		}
 
 		closed := r.URL.Query().Get("close")
 		if closed != "" {
@@ -246,30 +251,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	name := r.URL.Query().Get("name")
 	code := r.URL.Query().Get("code")
-	role := r.URL.Query().Get("rule")
+
 	mode := wss.Mode(r.URL.Query().Get("mode"))
 
 	uuid := time.Now().Format("2006.0102.150405.9999")
 	atomic.AddInt32(&s.conn, +1)
-	log.Debugln("enter:%v, code:%v, name:%v, role:%v, mode:%v", uuid, code, name, role, mode)
+	log.Debugln("enter:%v, code:%v, name:%v, mode:%v", uuid, code, name, mode)
 	defer func() {
 		atomic.AddInt32(&s.conn, -1)
-		log.Debugln("leave:%v  code:%v, name:%v, role:%v, mode:%v", uuid, code, name, role, mode)
+		log.Debugln("leave:%v  code:%v, name:%v, mode:%v", uuid, code, name, mode)
 	}()
 
 	// 情况1: 直接连接
-	if (role == wss.RoleAgent || role == wss.RoleConnector) && mode.IsDirect() {
+	if mode.IsDirect() {
 		s.directConnect(r, w)
 		return
 	}
 
 	// 情况2: 主动连接方, 需要通过被动方
-	if role == wss.RoleAgent || role == wss.RoleConnector {
+	if mode.IsForward() {
 		s.forwardConnect(name, code, mode, r, w)
 		return
 	}
 
 	// 情况3: 管理员通道
+	role := r.URL.Query().Get("rule")
 	if role == wss.RoleManager {
 		s.manageConnect(name, r, w)
 		return
@@ -289,6 +295,14 @@ func (s *Server) Version(w http.ResponseWriter, r *http.Request) {
 	raw, _ := json.Marshal(map[string]interface{}{
 		"version": Version,
 		"now":     time.Now().Format("2006-01-02T15:04:05.9999"),
+	})
+	_, _ = w.Write(raw)
+}
+
+func (s *Server) Time(w http.ResponseWriter, r *http.Request) {
+	raw, _ := json.Marshal(map[string]interface{}{
+		"time": time.Since(s.date),
+		"now":  time.Now().Format("2006-01-02T15:04:05.9999"),
 	})
 	_, _ = w.Write(raw)
 }
@@ -330,17 +344,6 @@ func (s *Server) Upgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, _ = fmt.Fprint(w, hex.EncodeToString(hash.Sum(nil)))
-}
-
-func (s *Server) ProxyHandler(target *url.URL, w http.ResponseWriter, r *http.Request) {
-	(&httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL = target
-			req.Host = target.Host
-			req.RequestURI = target.RequestURI()
-			req.Header.Set("Host", target.Host)
-		},
-	}).ServeHTTP(w, r)
 }
 
 type ControlMessage struct {
