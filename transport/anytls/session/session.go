@@ -15,8 +15,8 @@ import (
 
 	"github.com/tiechui1994/tcpover/transport/anytls/padding"
 	"github.com/tiechui1994/tcpover/transport/anytls/util"
+	"github.com/tiechui1994/tcpover/transport/common/log"
 	"github.com/tiechui1994/tcpover/transport/common/pool"
-	"github.com/tiechui1994/tool/log"
 )
 
 type Session struct {

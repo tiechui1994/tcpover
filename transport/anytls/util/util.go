@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tiechui1994/tool/log"
+	"github.com/tiechui1994/tcpover/transport/common/log"
 )
 
 func NewDeadlineWatcher(ddl time.Duration, timeOut func()) (done func()) {

@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/tiechui1994/tcpover/transport/common/log"
 	"github.com/tiechui1994/tcpover/transport/wss"
-	"github.com/tiechui1994/tool/log"
 )
 
 type StdReadWriteCloser struct {

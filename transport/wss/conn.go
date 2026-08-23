@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/tiechui1994/tool/log"
+	"github.com/tiechui1994/tcpover/transport/common/log"
 )
 
 type websocketConn struct {

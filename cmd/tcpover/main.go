@@ -15,9 +15,9 @@ import (
 	"github.com/tiechui1994/tcpover"
 	"github.com/tiechui1994/tcpover/config"
 	"github.com/tiechui1994/tcpover/ctx"
+	"github.com/tiechui1994/tcpover/transport/common/log"
 	"github.com/tiechui1994/tcpover/transport/outbound"
 	"github.com/tiechui1994/tcpover/transport/wss"
-	"github.com/tiechui1994/tool/log"
 )
 
 var debug bool

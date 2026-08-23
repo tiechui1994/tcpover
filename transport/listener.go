@@ -9,10 +9,10 @@ import (
 
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/common/bufio"
+	"github.com/tiechui1994/tcpover/transport/common/log"
 	"github.com/tiechui1994/tcpover/transport/listener/http"
 	"github.com/tiechui1994/tcpover/transport/listener/mixed"
 	"github.com/tiechui1994/tcpover/transport/listener/socks"
-	"github.com/tiechui1994/tool/log"
 )
 
 func preHandleMetadata(metadata *ctx.Metadata) error {

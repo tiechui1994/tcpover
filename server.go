@@ -19,6 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/common/bufio"
+	"github.com/tiechui1994/tcpover/transport/common/log"
 	"github.com/tiechui1994/tcpover/transport/inbound"
 	"github.com/tiechui1994/tcpover/transport/mux"
 	"github.com/tiechui1994/tcpover/transport/shadowsocks/core"
@@ -26,8 +27,6 @@ import (
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
-	"github.com/tiechui1994/tool/log"
-	"github.com/tiechui1994/tool/util"
 )
 
 type PairGroup struct {
@@ -315,11 +314,12 @@ func (s *Server) Upgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reader, err := util.File(download, "GET", util.WithRetry(2))
+	response, err := http.Get(download)
 	if err != nil {
 		http.Error(w, "download failure "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	defer response.Body.Close()
 
 	pwd, _ := os.Executable()
 	oldPath := filepath.Join(filepath.Dir(pwd), "stream.backup")
@@ -330,7 +330,7 @@ func (s *Server) Upgrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hash := sha1.New()
-	readerToHash := io.TeeReader(reader, hash)
+	readerToHash := io.TeeReader(response.Body, hash)
 
 	_, err = io.Copy(fd, readerToHash)
 	if err != nil {

@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/tiechui1994/tool/log"
+	"github.com/tiechui1994/tcpover/transport/common/log"
 
 	"github.com/gorilla/websocket"
 )

@@ -10,8 +10,8 @@ import (
 	"github.com/tiechui1994/tcpover/ctx"
 
 	"github.com/tiechui1994/tcpover/transport/common/bufio"
+	"github.com/tiechui1994/tcpover/transport/common/log"
 	"github.com/tiechui1994/tcpover/transport/wss"
-	"github.com/tiechui1994/tool/log"
 	"github.com/xtaci/smux"
 )
 
@@ -58,7 +58,7 @@ func (s *Service) NewConnection(conn net.Conn) error {
 			_ = recover()
 			ticker.Stop()
 		}()
-		
+
 		done := session.CloseChan()
 		frame := *(*smux.Frame)(unsafe.Pointer(&frame{
 			ver:  byte(DefaultMuxConfig.Version),

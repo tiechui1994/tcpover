@@ -7,12 +7,12 @@ import (
 	"regexp"
 
 	"github.com/tiechui1994/tcpover/ctx"
+	"github.com/tiechui1994/tcpover/transport/common/log"
 	"github.com/tiechui1994/tcpover/transport/mux"
 	"github.com/tiechui1994/tcpover/transport/socks5"
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
-	"github.com/tiechui1994/tool/log"
 )
 
 type VlessOption struct {
