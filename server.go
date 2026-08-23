@@ -301,8 +301,9 @@ func (s *Server) Version(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) Time(w http.ResponseWriter, r *http.Request) {
 	raw, _ := json.Marshal(map[string]interface{}{
-		"time": time.Since(s.date),
-		"now":  time.Now().Format("2006-01-02T15:04:05.9999"),
+		"time":  time.Since(s.date).String(),
+		"start": s.date.Format("2006-01-02T15:04:05.9999"),
+		"now":   time.Now().Format("2006-01-02T15:04:05.9999"),
 	})
 	_, _ = w.Write(raw)
 }
