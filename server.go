@@ -177,10 +177,7 @@ func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
 	cc := inbound.NewSocket(addr, remote, ctx.SHADOWSOCKS)
 	if mux.IsSpecialFqdn(cc.Metadata().Host) {
 		server := mux.NewServer()
-		err = server.NewConnection(remote)
-		if err != nil && err != io.EOF {
-			log.Errorln("NewConnection: %v", err)
-		}
+		_ = server.NewConnection(remote)
 	} else {
 		local, err := net.Dial("tcp", cc.Metadata().RemoteAddress())
 		if err != nil {
@@ -392,10 +389,7 @@ func (s *Server) SS(ct context.Context, port uint16, name, password string) erro
 				cc := inbound.NewSocket(target, conn, ctx.SHADOWSOCKS)
 				if mux.IsSpecialFqdn(cc.Metadata().Host) {
 					server := mux.NewServer()
-					err = server.NewConnection(cc.Conn())
-					if err != nil && err != io.EOF {
-						log.Errorln("NewConnection: %v", err)
-					}
+					_ = server.NewConnection(cc.Conn())
 				} else {
 					local, err := net.Dial("tcp", cc.Metadata().RemoteAddress())
 					if err != nil {
@@ -439,10 +433,7 @@ func (s *Server) TCPVless(ct context.Context, port uint16) error {
 				cc := inbound.NewSocket(addr, conn, ctx.SHADOWSOCKS)
 				if mux.IsSpecialFqdn(cc.Metadata().Host) {
 					server := mux.NewServer()
-					err = server.NewConnection(cc.Conn())
-					if err != nil && err != io.EOF {
-						log.Errorln("NewConnection: %v", err)
-					}
+					_ = server.NewConnection(cc.Conn())
 				} else {
 					local, err := net.Dial("tcp", cc.Metadata().RemoteAddress())
 					if err != nil {

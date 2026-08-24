@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"regexp"
 	"sync"
@@ -184,10 +183,7 @@ func (c *PassiveResponder) connectLocal(code, network, proto string, header map[
 	cc := inbound.NewSocket(addr, conn, ctx.SHADOWSOCKS)
 	if mux.IsSpecialFqdn(cc.Metadata().Host) {
 		server := mux.NewServer()
-		err = server.NewConnection(conn)
-		if err != nil && err != io.EOF {
-			log.Errorln("NewConnection: %v", err)
-		}
+		_ = server.NewConnection(conn)
 	} else {
 		// link
 		remote := conn

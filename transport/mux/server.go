@@ -88,8 +88,8 @@ func (s *Service) NewConnection(conn net.Conn) error {
 		if wss.IsClose(err) {
 			return nil
 		}
-		if err != nil {
-			log.Errorln("err: %v", err)
+		if err != nil && err != io.ErrClosedPipe {
+			log.Errorln("session closed: %v", err)
 			return err
 		}
 
@@ -103,7 +103,7 @@ func (s *Service) NewConnection(conn net.Conn) error {
 		log.Debugln("mux dial connect: %v", request.Destination)
 		local, err := net.Dial(request.Network, request.Destination)
 		if err != nil {
-			log.Errorln("net dial: %v", err)
+			log.Errorln("tcp dial: %v", err)
 			continue
 		}
 

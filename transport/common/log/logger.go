@@ -72,6 +72,7 @@ func Fatalln(format string, args ...interface{}) {
 func sprint(level Level, message string) {
 	hook.Fire(&logrus.Entry{
 		Level:   level,
+		Time: time.Now(),
 		Message: message,
 	})
 }
