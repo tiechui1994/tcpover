@@ -88,8 +88,10 @@ func (s *Service) NewConnection(conn net.Conn) error {
 		if wss.IsClose(err) {
 			return nil
 		}
-		if err != nil && err != io.ErrClosedPipe {
-			log.Errorln("session closed: %v", err)
+		if err != nil {
+			if err != io.ErrClosedPipe {
+				log.Errorln("session closed: %v", err)
+			}
 			return err
 		}
 

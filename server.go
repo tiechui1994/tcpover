@@ -169,7 +169,9 @@ func (s *Server) forwardConnect(remoteName, code string, mode wss.Mode, r *http.
 func (s *Server) directConnect(r *http.Request, w http.ResponseWriter) {
 	remote, addr, err := s.getConnectConnAndAddr(r, w)
 	if err != nil {
-		log.Errorln("%v", err)
+		if !wss.IsClose(err) {
+			log.Errorln("get connect addr: %v", err)
+		}		
 		return
 	}
 	defer remote.Close()
