@@ -98,7 +98,9 @@ func (s *Service) NewConnection(conn net.Conn) error {
 		// read mux addr
 		request, err := ReadStreamRequest(stream)
 		if err != nil {
-			log.Errorln("read mux stream request: %v", err)
+			if err != io.EOF {
+				log.Errorln("read mux stream request: %v", err)
+			}
 			continue
 		}
 
