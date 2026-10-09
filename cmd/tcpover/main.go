@@ -57,6 +57,8 @@ func main() {
 	remoteAddr := flag.String("addr", "", "want to connect remote addr. [C]")
 
 	vless := flag.Bool("vless", false, "support vless protocol. default wless protocol")
+	vlessH1Port := flag.Int("vlessH1", 0, "listen port for vless over https(tcp+tls+http1.1). 0 means disabled")
+	vlessH2Port := flag.Int("vlessH2", 0, "listen port for vless over https(tcp+tls+http2). 0 means disabled")
 	cloudflare := flag.Bool("cf", false, "cloudflare proxy ip")
 	gcore := flag.Bool("gc", false, "gcore proxy ip")
 
@@ -89,9 +91,28 @@ func main() {
 	}
 
 	if *runAsServer {
+		srv := tcpover.NewServer()
 		app := http.Server{
-			Handler: tcpover.NewServer(),
+			Handler: srv,
 			Addr:    *listenAddr,
+		}
+
+		if *vlessH1Port != 0 {
+			go func() {
+				log.Infoln("addr [:%v] vless over https(tcp+tls+http) service is starting...", *vlessH1Port)
+				if err := srv.TCPVlessH1(context.Background(), uint16(*vlessH1Port), "", ""); err != nil {
+					log.Errorln("failed to start vless h1 server: %v", err)
+				}
+			}()
+		}
+
+		if *vlessH2Port != 0 {
+			go func() {
+				log.Infoln("addr [:%v] vless over https(tcp+tls+http2) service is starting...", *vlessH2Port)
+				if err := srv.TCPVlessH2(context.Background(), uint16(*vlessH2Port), "", ""); err != nil {
+					log.Errorln("failed to start vless h2 server: %v", err)
+				}
+			}()
 		}
 
 		go func() {

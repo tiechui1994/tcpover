@@ -3,8 +3,10 @@ package tcpover
 import (
 	"context"
 	"crypto/sha1"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -19,7 +21,9 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport/common/bufio"
+	"github.com/tiechui1994/tcpover/transport/common/ca"
 	"github.com/tiechui1994/tcpover/transport/common/log"
+	thttp "github.com/tiechui1994/tcpover/transport/http"
 	"github.com/tiechui1994/tcpover/transport/inbound"
 	"github.com/tiechui1994/tcpover/transport/mux"
 	"github.com/tiechui1994/tcpover/transport/shadowsocks/core"
@@ -27,6 +31,7 @@ import (
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
+	"golang.org/x/net/http2"
 )
 
 type PairGroup struct {
@@ -426,26 +431,137 @@ func (s *Server) TCPVless(ct context.Context, port uint16) error {
 				continue
 			}
 			go func() {
-				addr, err := vless.ReadAddr(conn)
+				s.serveVlessTunnel(conn)
+			}()
+		}
+	}
+}
+
+// serveVlessTunnel reads the VLESS request header from tunnel, dials the target
+// and relays traffic. It is shared by the raw VLESS, VLESS-over-H1 and
+// VLESS-over-H2 servers.
+func (s *Server) serveVlessTunnel(tunnel net.Conn) {
+	defer tunnel.Close()
+
+	addr, err := vless.ReadAddr(tunnel)
+	if err != nil {
+		return
+	}
+
+	cc := inbound.NewSocket(addr, tunnel, ctx.SHADOWSOCKS)
+	if mux.IsSpecialFqdn(cc.Metadata().Host) {
+		server := mux.NewServer()
+		_ = server.NewConnection(cc.Conn())
+		return
+	}
+
+	local, err := net.Dial("tcp", cc.Metadata().RemoteAddress())
+	if err != nil {
+		log.Debugln("tcp connect [%v] : %v", cc.Metadata().RemoteAddress(), err)
+		return
+	}
+
+	bufio.Relay(local, cc.Conn(), nil)
+}
+
+// TCPVlessH1 serves the VLESS protocol over a TCP+TLS+HTTP transport
+// (non-CONNECT). Each connection is upgraded into a full-duplex stream via a
+// plain HTTP request/response as implemented in transport/http.
+//
+// certPEM and keyPEM are optional PEM encoded certificate/key. When both are
+// empty a random self-signed key pair is generated.
+func (s *Server) TCPVlessH1(ct context.Context, port uint16, certPEM, keyPEM string) error {
+	cert, err := ca.LoadTLSKeyPair(certPEM, keyPEM)
+	if err != nil {
+		return err
+	}
+
+	var listenConfig = net.ListenConfig{
+		Control: Control,
+	}
+	listen, err := listenConfig.Listen(ct, "tcp", fmt.Sprintf("0.0.0.0:%v", port))
+	if err != nil {
+		return err
+	}
+
+	tlsListener := tls.NewListener(listen, &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	})
+
+	for {
+		select {
+		case <-ct.Done():
+			return nil
+		default:
+			conn, err := tlsListener.Accept()
+			if err != nil {
+				continue
+			}
+			go func() {
+				tunnel, _, err := thttp.ServeConn(conn)
 				if err != nil {
 					_ = conn.Close()
 					return
 				}
-
-				cc := inbound.NewSocket(addr, conn, ctx.SHADOWSOCKS)
-				if mux.IsSpecialFqdn(cc.Metadata().Host) {
-					server := mux.NewServer()
-					_ = server.NewConnection(cc.Conn())
-				} else {
-					local, err := net.Dial("tcp", cc.Metadata().RemoteAddress())
-					if err != nil {
-						log.Debugln("tcp connect [%v] : %v", cc.Metadata().RemoteAddress(), err)
-						return
-					}
-
-					bufio.Relay(local, cc.Conn(), nil)
-				}
+				s.serveVlessTunnel(tunnel)
 			}()
 		}
 	}
+}
+
+// TCPVlessH2 serves the VLESS protocol over a TCP+TLS+HTTP/2 (or HTTP/1.1)
+// transport. The TLS listener advertises both "h2" and "http/1.1" via ALPN so
+// the same port can be reached by either protocol. Each HTTP request is upgraded
+// into a full-duplex stream via transport/http.ServeH2 and then carries VLESS.
+//
+// certPEM and keyPEM are optional PEM encoded certificate/key. When both are
+// empty a random self-signed key pair is generated.
+func (s *Server) TCPVlessH2(ct context.Context, port uint16, certPEM, keyPEM string) error {
+	cert, err := ca.LoadTLSKeyPair(certPEM, keyPEM)
+	if err != nil {
+		return err
+	}
+
+	var listenConfig = net.ListenConfig{
+		Control: Control,
+	}
+	listen, err := listenConfig.Listen(ct, "tcp", fmt.Sprintf("0.0.0.0:%v", port))
+	if err != nil {
+		return err
+	}
+
+	tlsListener := tls.NewListener(listen, &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		NextProtos:   []string{"h2", "http/1.1"},
+	})
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tunnel, err := thttp.ServeH2(w, r)
+		if err != nil {
+			log.Errorln("h2 serve conn: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.serveVlessTunnel(tunnel)
+	})
+
+	server := &http.Server{
+		Handler: handler,
+		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			return context.WithValue(ctx, thttp.ConnContextKey, c)
+		},
+	}
+	if err := http2.ConfigureServer(server, &http2.Server{}); err != nil {
+		return err
+	}
+
+	go func() {
+		<-ct.Done()
+		_ = server.Close()
+	}()
+
+	if err := server.Serve(tlsListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }

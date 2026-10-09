@@ -13,6 +13,7 @@ import (
 	"github.com/tiechui1994/tcpover/ctx"
 	"github.com/tiechui1994/tcpover/transport"
 	"github.com/tiechui1994/tcpover/transport/common/log"
+	"github.com/tiechui1994/tcpover/transport/http"
 	"github.com/tiechui1994/tcpover/transport/vless"
 	"github.com/tiechui1994/tcpover/transport/wless"
 	"github.com/tiechui1994/tcpover/transport/wss"
@@ -81,11 +82,22 @@ func (c *Client) stdConnectServer(local io.ReadWriteCloser, remoteName, remoteAd
 		mode = wss.ModeDirect
 	}
 
-	conn, err := wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
-		Name:   remoteName,
-		Mode:   mode,
-		Header: wss.Header(proto, header),
-	})
+	var conn net.Conn
+	var err error
+	switch {
+	case strings.HasPrefix(c.server, "h2://"), strings.HasPrefix(c.server, "https://"):
+		conn, err = http.Connect(context.Background(), c.server, &http.ConnectParam{
+			Name:   remoteName,
+			Mode:   string(mode),
+			Header: wss.Header(proto, header),
+		})
+	default:
+		conn, err = wss.WebSocketConnect(context.Background(), c.server, &wss.ConnectParam{
+			Name:   remoteName,
+			Mode:   mode,
+			Header: wss.Header(proto, header),
+		})
+	}
 	if err != nil {
 		return err
 	}
