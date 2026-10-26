@@ -26,8 +26,8 @@ func NewVless(option VlessOption) (ctx.Proxy, error) {
 	if option.Server == "" {
 		return nil, fmt.Errorf("server must be set")
 	}
-	if !regexp.MustCompile(`^(ws|wss|https|h2)://`).MatchString(option.Server) {
-		return nil, fmt.Errorf("server must be startsWith wss://, ws://, https:// or h2://")
+	if !regexp.MustCompile(`^(ws|wss|https|http|h2|h2c)://`).MatchString(option.Server) {
+		return nil, fmt.Errorf("server must be startsWith wss://, ws://, https://, http://, h2:// or h2c://")
 	}
 
 	dispatcher, err := newVlessDirectConnDispatcher(option)
@@ -161,7 +161,8 @@ func connect(ctx context.Context, optionMode wss.Mode, optionServer, remoteName 
 	//       远程代理, name not empty
 	// mode: ModeDirect | ModeForward
 	switch {
-	case strings.HasPrefix(optionServer, "h2://"), strings.HasPrefix(optionServer, "https://"):
+	case strings.HasPrefix(optionServer, "h2://"), strings.HasPrefix(optionServer, "h2c://"),
+		strings.HasPrefix(optionServer, "https://"), strings.HasPrefix(optionServer, "http://"):
 		return http.Connect(ctx, optionServer, &http.ConnectParam{
 			Name:   remoteName,
 			Mode:   string(optionMode),

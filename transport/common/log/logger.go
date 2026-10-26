@@ -32,7 +32,7 @@ type JSONFormatter = logrus.JSONFormatter
 
 func init() {
 	logrus.SetOutput(NewTimeoutWriter(time.Second))
-	logrus.SetLevel(WarnLevel)
+	logrus.SetLevel(DebugLevel)
 	logrus.SetFormatter(&logrus.TextFormatter{
 		DisableTimestamp: true,
 		DisableQuote:     true,
@@ -72,7 +72,7 @@ func Fatalln(format string, args ...interface{}) {
 func sprint(level Level, message string) {
 	hook.Fire(&logrus.Entry{
 		Level:   level,
-		Time: time.Now(),
+		Time:    time.Now(),
 		Message: message,
 	})
 }

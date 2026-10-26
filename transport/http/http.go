@@ -1,8 +1,9 @@
-// Package http implements the VLESS-over-TLS+HTTP tunnel transport. It supports
+// Package http implements the VLESS-over-HTTP tunnel transport. It supports
 // both HTTP/1.1 (raw request/response upgrade, see ServeConn/Connect) and
 // HTTP/2 (streaming via an http.Handler, see ServeH2/connectH2). The client
 // entry point Connect picks the protocol based on the server URL scheme:
-// "h2://" selects HTTP/2, anything else (e.g. "https://") selects HTTP/1.1.
+// "h2://" / "h2c://" select HTTP/2 (TLS / plaintext prior-knowledge), while
+// "https://" / "http://" select HTTP/1.1 (TLS / plaintext).
 package http
 
 import (
@@ -39,11 +40,13 @@ type ConnectParam struct {
 	Header http.Header
 }
 
-// Connect dials server and establishes a full-duplex VLESS tunnel over TLS+HTTP.
-// When the server URL uses the "h2://" scheme the connection is established
-// with HTTP/2, otherwise HTTP/1.1 is used.
+// Connect dials server and establishes a full-duplex VLESS tunnel over HTTP.
+// When the server URL uses the "h2://" or "h2c://" scheme the connection is
+// established with HTTP/2 (TLS for "h2://", plaintext prior-knowledge for
+// "h2c://"); otherwise HTTP/1.1 is used ("https://" for TLS, "http://" for
+// plaintext).
 func Connect(ctx context.Context, server string, param *ConnectParam) (net.Conn, error) {
-	if strings.HasPrefix(server, "h2://") {
+	if strings.HasPrefix(server, "h2://") || strings.HasPrefix(server, "h2c://") {
 		return connectH2(ctx, server, param)
 	}
 	return connectH1(ctx, server, param)
@@ -152,10 +155,12 @@ func StreamHTTPConn(conn net.Conn, cfg *Config) (net.Conn, error) {
 	}, nil
 }
 
-// connectH1 dials server (https://host:port/path), performs the TLS handshake
-// and the HTTP/1.1 tunnel handshake, returning a net.Conn ready to carry the
-// VLESS protocol. The certificate of the remote endpoint is not verified
-// strictly (matching the behavior of the wss transport).
+// connectH1 dials server (https://host:port/path or http://host:port/path) and
+// performs the HTTP/1.1 tunnel handshake, returning a net.Conn ready to carry
+// the VLESS protocol. The "https://" scheme additionally performs a TLS
+// handshake; "http://" connects in plaintext. The certificate of the remote
+// endpoint is not verified strictly (matching the behavior of the wss
+// transport).
 func connectH1(ctx context.Context, server string, param *ConnectParam) (net.Conn, error) {
 	if param == nil {
 		param = &ConnectParam{}
@@ -169,13 +174,28 @@ func connectH1(ctx context.Context, server string, param *ConnectParam) (net.Con
 	host := u.Hostname()
 	port := u.Port()
 	if port == "" {
-		port = "443"
+		if strings.HasPrefix(server, "https://") {
+			port = "443"
+		} else {
+			port = "80"
+		}
 	}
 	addr := net.JoinHostPort(host, port)
 
 	rawConn, err := (&net.Dialer{Timeout: 45 * time.Second}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
+	}
+
+	if strings.HasPrefix(server, "http://") {
+		cfg := &Config{
+			Host:    host,
+			Port:    port,
+			Path:    u.Path,
+			Headers: param.Header,
+			TLS:     false,
+		}
+		return StreamHTTPConn(rawConn, cfg)
 	}
 
 	tlsConfig := wss.GetGlobalFingerprintTLCConfig(&tls.Config{
@@ -246,15 +266,19 @@ const ConnContextKey contextKey = "tcpover/http-net-conn"
 // connContextKey is the internal alias used by ServeH2.
 var connContextKey = ConnContextKey
 
-// connectH2 dials server (h2://host:port/path or https://host:port/path),
-// performs the TLS handshake with ALPN "h2" and establishes a full-duplex
-// HTTP/2 stream that carries the VLESS protocol. The returned net.Conn exposes
-// Read (upstream, from the response body) and Write (downstream, into the
-// request body) so the caller can run VLESS on top of it.
+// connectH2 dials server (h2://host:port/path, h2c://host:port/path or
+// https://host:port/path) and establishes a full-duplex HTTP/2 stream that
+// carries the VLESS protocol. The "h2://" scheme performs a TLS handshake with
+// ALPN "h2"; the "h2c://" scheme uses HTTP/2 cleartext (prior-knowledge) over a
+// plain TCP connection. The returned net.Conn exposes Read (upstream, from the
+// response body) and Write (downstream, into the request body) so the caller
+// can run VLESS on top of it.
 func connectH2(ctx context.Context, server string, param *ConnectParam) (net.Conn, error) {
 	if param == nil {
 		param = &ConnectParam{}
 	}
+
+	plaintext := strings.HasPrefix(server, "h2c://")
 
 	u, err := url.Parse(server)
 	if err != nil {
@@ -264,42 +288,63 @@ func connectH2(ctx context.Context, server string, param *ConnectParam) (net.Con
 	host := u.Hostname()
 	port := u.Port()
 	if port == "" {
-		port = "443"
+		if plaintext {
+			port = "80"
+		} else {
+			port = "443"
+		}
 	}
 	address := net.JoinHostPort(host, port)
 
-	tlsConfig := wss.GetGlobalFingerprintTLCConfig(&tls.Config{
-		ServerName: host,
-		NextProtos: []string{http2.NextProtoTLS},
-	})
-
-	var tlsConn net.Conn
-	transport := &http2.Transport{
-		TLSClientConfig: tlsConfig,
-		DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
-			rawConn, err := (&net.Dialer{Timeout: 45 * time.Second}).DialContext(ctx, network, addr)
-			if err != nil {
-				return nil, err
-			}
-			conn := tls.Client(rawConn, cfg)
-			if err := conn.HandshakeContext(ctx); err != nil {
-				rawConn.Close()
-				return nil, err
-			}
-			if state := conn.ConnectionState(); state.NegotiatedProtocol != http2.NextProtoTLS {
-				rawConn.Close()
-				return nil, fmt.Errorf("tls alpn negotiation failed: got %q want %q", state.NegotiatedProtocol, http2.NextProtoTLS)
-			}
-			tlsConn = conn
-			return conn, nil
-		},
+	var conn net.Conn
+	var transport *http2.Transport
+	if plaintext {
+		transport = &http2.Transport{
+			AllowHTTP: true,
+			DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+				c, err := (&net.Dialer{Timeout: 45 * time.Second}).DialContext(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				conn = c
+				return c, nil
+			},
+		}
+	} else {
+		tlsConfig := wss.GetGlobalFingerprintTLCConfig(&tls.Config{
+			ServerName: host,
+			NextProtos: []string{http2.NextProtoTLS},
+		})
+		transport = &http2.Transport{
+			TLSClientConfig: tlsConfig,
+			DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+				rawConn, err := (&net.Dialer{Timeout: 45 * time.Second}).DialContext(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				c := tls.Client(rawConn, cfg)
+				if err := c.HandshakeContext(ctx); err != nil {
+					rawConn.Close()
+					return nil, err
+				}
+				if state := c.ConnectionState(); state.NegotiatedProtocol != http2.NextProtoTLS {
+					rawConn.Close()
+					return nil, fmt.Errorf("tls alpn negotiation failed: got %q want %q", state.NegotiatedProtocol, http2.NextProtoTLS)
+				}
+				conn = c
+				return c, nil
+			},
+		}
 	}
 	client := &http.Client{Transport: transport}
 
-	// the request is always sent over TLS even when the caller uses the logical
-	// h2s:// scheme.
+	// the request is sent over TLS for "h2://" and over plaintext for "h2c://".
 	requestURL := *u
-	requestURL.Scheme = "https"
+	if plaintext {
+		requestURL.Scheme = "http"
+	} else {
+		requestURL.Scheme = "https"
+	}
 
 	pr, pw := io.Pipe()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL.String(), pr)
@@ -327,11 +372,11 @@ func connectH2(ctx context.Context, server string, param *ConnectParam) (net.Con
 
 	localAddr := addr{network: "tcp", address: address}
 	remoteAddr := addr{network: "tcp", address: address}
-	if tlsConn != nil {
-		if la := tlsConn.LocalAddr(); la != nil {
+	if conn != nil {
+		if la := conn.LocalAddr(); la != nil {
 			localAddr = addr{network: la.Network(), address: la.String()}
 		}
-		if ra := tlsConn.RemoteAddr(); ra != nil {
+		if ra := conn.RemoteAddr(); ra != nil {
 			remoteAddr = addr{network: ra.Network(), address: ra.String()}
 		}
 	}
